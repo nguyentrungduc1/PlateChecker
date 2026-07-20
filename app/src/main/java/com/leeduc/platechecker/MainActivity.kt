@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private var lastPhotoUri: Uri? = null
     private var lastPlateCropBitmap: Bitmap? = null
+    private var isShowingCapturedPhoto = false
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -67,8 +68,26 @@ class MainActivity : AppCompatActivity() {
 
         if (allGranted) startCamera() else requestPermissionsLauncher.launch(neededPermissions.toTypedArray())
 
-        binding.btnCapture.setOnClickListener { takePhoto() }
+        binding.btnCapture.setOnClickListener {
+            if (isShowingCapturedPhoto) {
+                showCameraView()
+            } else {
+                takePhoto()
+            }
+        }
         binding.btnCheck.setOnClickListener { runCheck() }
+    }
+
+    /** Quay lại xem camera trực tiếp để canh và chụp tấm tiếp theo. */
+    private fun showCameraView() {
+        isShowingCapturedPhoto = false
+        binding.imgPreview.visibility = android.view.View.GONE
+        binding.previewView.visibility = android.view.View.VISIBLE
+        binding.guideOverlay.visibility = android.view.View.VISIBLE
+        binding.btnCapture.text = "Chụp ảnh"
+        binding.btnCheck.isEnabled = false
+        binding.txtResult.text = ""
+        lastPlateCropBitmap = null
     }
 
     private fun startCamera() {
@@ -172,6 +191,8 @@ class MainActivity : AppCompatActivity() {
                     // Hiện đúng phần ảnh sẽ được OCR để người dùng biết có canh đúng biển số không
                     binding.imgPreview.setImageBitmap(plateCrop)
 
+                    isShowingCapturedPhoto = true
+                    binding.btnCapture.text = "Chụp lại"
                     binding.btnCheck.isEnabled = true
                     binding.txtResult.text = ""
                 }
@@ -303,6 +324,13 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(this, WebViewActivity::class.java)
             intent.putExtra(WebViewActivity.EXTRA_PLATE_CODE, result)
             startActivity(intent)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (isShowingCapturedPhoto) {
+            showCameraView()
         }
     }
 
