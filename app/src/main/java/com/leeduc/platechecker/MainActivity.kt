@@ -17,11 +17,13 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import com.leeduc.platechecker.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
@@ -35,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
     private var lastPhotoUri: Uri? = null
+    private var lastPlateCropBitmap: Bitmap? = null
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -50,6 +53,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
+        binding.previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
 
         val neededPermissions = mutableListOf(Manifest.permission.CAMERA)
         // Trên Android 9 (API 28) trở xuống cần quyền ghi bộ nhớ để lưu vào DCIM theo kiểu file cũ
@@ -72,12 +76,17 @@ class MainActivity : AppCompatActivity() {
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
 
-            val preview = Preview.Builder().build().also {
-                it.setSurfaceProvider(binding.previewView.surfaceProvider)
-            }
+            // Ép Preview và ImageCapture dùng cùng tỉ lệ khung hình, để khung ngắm
+            // trên preview khớp đúng với vùng cắt trên ảnh chụp thật.
+            val preview = Preview.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                .build().also {
+                    it.setSurfaceProvider(binding.previewView.surfaceProvider)
+                }
 
             // Ảnh chất lượng cao + luôn bật đèn flash khi chụp
             imageCapture = ImageCapture.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .setJpegQuality(100)
                 .setFlashMode(ImageCapture.FLASH_MODE_ON)
@@ -145,14 +154,23 @@ class MainActivity : AppCompatActivity() {
                         sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, uri))
                     }
 
-                    // Sửa lỗi ảnh bị xoay: đọc EXIF, xoay lại pixel cho đúng chiều rồi ghi đè file
-                    val correctedBitmap = correctOrientation(uri)
+                    // Xoay ảnh đúng chiều theo EXIF, đóng dấu ngày giờ chụp vào góc dưới bên phải,
+                    // rồi ghi đè lại file gốc một lần (ảnh lưu trong DCIM sẽ có sẵn dấu thời gian)
+                    val rotatedBitmap = fixOrientation(uri)
+                    val stampedBitmap = addTimestampWatermark(rotatedBitmap)
+                    saveBitmapToUri(stampedBitmap, uri)
+
+                    // Chỉ cắt đúng vùng nằm trong khung ngắm để đưa vào OCR, không quét cả ảnh
+                    val plateCrop = cropToGuideRegion(stampedBitmap)
+                    lastPlateCropBitmap = plateCrop
 
                     Toast.makeText(baseContext, "Đã lưu vào DCIM/PlateChecker", Toast.LENGTH_SHORT).show()
 
                     binding.previewView.visibility = android.view.View.GONE
+                    binding.guideOverlay.visibility = android.view.View.GONE
                     binding.imgPreview.visibility = android.view.View.VISIBLE
-                    binding.imgPreview.setImageBitmap(correctedBitmap)
+                    // Hiện đúng phần ảnh sẽ được OCR để người dùng biết có canh đúng biển số không
+                    binding.imgPreview.setImageBitmap(plateCrop)
 
                     binding.btnCheck.isEnabled = true
                     binding.txtResult.text = ""
@@ -162,10 +180,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Đọc góc xoay từ EXIF, xoay vật lý pixel ảnh cho đúng chiều, rồi ghi đè lại
-     * file gốc (chất lượng JPEG tối đa) để ảnh trong DCIM và bước OCR đều đúng chiều.
+     * Đọc góc xoay từ EXIF và xoay vật lý pixel ảnh cho đúng chiều (chưa ghi file,
+     * việc ghi file sẽ làm một lần duy nhất sau khi đã đóng dấu thời gian).
      */
-    private fun correctOrientation(uri: Uri): Bitmap {
+    private fun fixOrientation(uri: Uri): Bitmap {
         val orientation = contentResolver.openInputStream(uri)?.use { input ->
             ExifInterface(input).getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
@@ -186,39 +204,96 @@ class MainActivity : AppCompatActivity() {
         if (rotationDegrees == 0) return original
 
         val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-        val rotated = Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
+        return Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
+    }
 
-        try {
-            contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                rotated.compress(Bitmap.CompressFormat.JPEG, 100, out)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Không ghi đè được ảnh đã xoay", e)
+    /**
+     * Vẽ dấu ngày giờ chụp vào góc dưới bên phải của ảnh, kiểu dấu thời gian của
+     * máy ảnh cũ - có nền mờ phía sau chữ để luôn đọc được dù nền ảnh sáng hay tối.
+     */
+    private fun addTimestampWatermark(bitmap: Bitmap): Bitmap {
+        val stamped = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = android.graphics.Canvas(stamped)
+
+        val timestampText = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale("vi", "VN"))
+            .format(System.currentTimeMillis())
+
+        val textSizePx = stamped.width * 0.032f
+        val padding = stamped.width * 0.02f
+
+        val textPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.parseColor("#FFC400")
+            textSize = textSizePx
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.MONOSPACE
+            setShadowLayer(4f, 2f, 2f, android.graphics.Color.BLACK)
         }
 
-        return rotated
+        val textWidth = textPaint.measureText(timestampText)
+        val fontMetrics = textPaint.fontMetrics
+        val textHeight = fontMetrics.bottom - fontMetrics.top
+
+        val boxRight = stamped.width - padding
+        val boxBottom = stamped.height - padding
+        val boxLeft = boxRight - textWidth - padding
+        val boxTop = boxBottom - textHeight - padding * 0.5f
+
+        val bgPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.parseColor("#66000000")
+            style = android.graphics.Paint.Style.FILL
+        }
+        canvas.drawRoundRect(
+            android.graphics.RectF(boxLeft, boxTop, boxRight, boxBottom),
+            12f, 12f, bgPaint
+        )
+
+        val textX = boxRight - padding / 2f - textWidth
+        val textY = boxBottom - padding / 2f - fontMetrics.bottom
+        canvas.drawText(timestampText, textX, textY, textPaint)
+
+        return stamped
+    }
+
+    private fun saveBitmapToUri(bitmap: Bitmap, uri: Uri) {
+        try {
+            contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Không ghi được ảnh đã đóng dấu thời gian", e)
+        }
+    }
+
+    /**
+     * Cắt đúng vùng nằm trong khung ngắm (PlateGuideOverlayView) ra khỏi ảnh gốc,
+     * dựa theo tỉ lệ phần trăm đã dùng để vẽ khung, để phần OCR sau này chỉ nhìn
+     * thấy vùng biển số thay vì toàn bộ bức ảnh.
+     */
+    private fun cropToGuideRegion(bitmap: Bitmap): Bitmap {
+        val frac = binding.guideOverlay.getGuideRectFraction()
+
+        val left = (frac.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+        val top = (frac.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+        val right = (frac.right * bitmap.width).toInt().coerceIn(left + 1, bitmap.width)
+        val bottom = (frac.bottom * bitmap.height).toInt().coerceIn(top + 1, bitmap.height)
+
+        return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
     }
 
     private fun runCheck() {
-        val uri = lastPhotoUri
-        if (uri == null) {
+        val plateBitmap = lastPlateCropBitmap
+        if (plateBitmap == null) {
             Toast.makeText(this, "Chưa có ảnh để kiểm tra", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val bitmap: Bitmap = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-            ?: run {
-                Toast.makeText(this, "Không đọc được ảnh", Toast.LENGTH_SHORT).show()
-                return
-            }
-
         binding.txtResult.text = "Đang phân tích biển số..."
         binding.btnCheck.isEnabled = false
 
-        PlateAnalyzer.analyze(bitmap) { result ->
+        PlateAnalyzer.analyze(plateBitmap) { result ->
             binding.btnCheck.isEnabled = true
             if (result == null) {
-                binding.txtResult.text = "Không nhận diện được biển số. Thử chụp lại gần và rõ hơn."
+                binding.txtResult.text = "Không nhận diện được biển số. Thử chụp lại, canh biển số vào đúng khung vàng."
                 return@analyze
             }
 
