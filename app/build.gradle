@@ -54,4 +54,7 @@ dependencies {
 
     // Coroutines cho tác vụ nền
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+
+    // Lưu tài khoản/mật khẩu đã mã hoá trên máy (giống trình quản lý mật khẩu của Chrome)
+    implementation 'androidx.security:security-crypto:1.1.0-alpha06'
 }

@@ -8,4 +8,18 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <Button
+        android:id="@+id/btnManageCredentials"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="8dp"
+        android:minWidth="0dp"
+        android:minHeight="0dp"
+        android:padding="10dp"
+        android:text="🔑"
+        android:textSize="16sp"
+        android:background="#88000000"
+        android:textColor="#FFFFFF" />
+
 </FrameLayout>
