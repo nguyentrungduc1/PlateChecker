@@ -42,6 +42,10 @@ class MainActivity : AppCompatActivity() {
     private var lastPhotoUri: Uri? = null
     private var lastPlateCropBitmap: Bitmap? = null
     private var isShowingCapturedPhoto = false
+    // Chỉ dùng để biết "vừa đi từ màn hình duyệt web quay lại" - khác với việc
+    // quay lại app sau khi chọn ảnh (cả 2 đều gây onPause/onResume như nhau,
+    // nên không thể dùng chung isShowingCapturedPhoto để phân biệt).
+    private var pendingResetAfterWebView = false
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -378,6 +382,7 @@ class MainActivity : AppCompatActivity() {
             savePlateImageToCache(plateBitmap)?.let { path ->
                 intent.putExtra(WebViewActivity.EXTRA_PLATE_IMAGE_PATH, path)
             }
+            pendingResetAfterWebView = true
             startActivity(intent)
         }
     }
@@ -391,12 +396,17 @@ class MainActivity : AppCompatActivity() {
                 intent.putExtra(WebViewActivity.EXTRA_PLATE_IMAGE_PATH, path)
             }
         }
+        pendingResetAfterWebView = true
         startActivity(intent)
     }
 
     override fun onResume() {
         super.onResume()
-        if (isShowingCapturedPhoto) {
+        // Chỉ tự quay về camera khi vừa đi từ WebView về, KHÔNG áp dụng khi vừa
+        // chọn ảnh xong từ trình chọn ảnh (trường hợp đó cũng gây onPause/onResume
+        // giống hệt, nếu dùng chung điều kiện sẽ vô tình xoá mất ảnh vừa load lên).
+        if (pendingResetAfterWebView) {
+            pendingResetAfterWebView = false
             showCameraView()
         }
     }
