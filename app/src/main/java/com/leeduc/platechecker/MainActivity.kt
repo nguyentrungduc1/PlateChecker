@@ -218,10 +218,15 @@ class MainActivity : AppCompatActivity() {
      * trực tiếp, không dùng nguyên cả ảnh để OCR.
      */
     private fun loadImageFromUri(uri: Uri) {
-        val rotated = fixOrientation(uri)
-        val plateCrop = cropToGuideRegion(rotated)
-        lastPlateCropBitmap = plateCrop
-        showCapturedResult(plateCrop)
+        try {
+            val rotated = fixOrientation(uri)
+            val plateCrop = cropToGuideRegion(rotated)
+            lastPlateCropBitmap = plateCrop
+            showCapturedResult(plateCrop)
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi khi load ảnh từ thư viện", e)
+            Toast.makeText(this, "Không đọc được ảnh đã chọn: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun showCapturedResult(bitmap: Bitmap) {

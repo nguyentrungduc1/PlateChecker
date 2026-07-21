@@ -46,15 +46,24 @@ class PlateGuideOverlayView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
-    /** Trả về vùng khung ngắm theo tỉ lệ phần trăm (left, top, right, bottom trong 0f..1f). */
+    /**
+     * Trả về vùng khung ngắm theo tỉ lệ phần trăm (left, top, right, bottom trong 0f..1f).
+     * Nếu view chưa được đo kích thước (width/height = 0, ví dụ bị gọi quá sớm hoặc
+     * đang ở trạng thái GONE trước khi layout lần đầu hoàn tất), trả về nguyên khung
+     * 0..1 (toàn bộ ảnh) để nơi gọi không bị chia cho 0 / tạo bitmap kích thước âm.
+     */
     fun getGuideRectFraction(): RectF {
+        if (width <= 0 || height <= 0) {
+            return RectF(0f, 0f, 1f, 1f)
+        }
+
         val guideWidthFraction = WIDTH_FRACTION
         val guideHeightFraction = (width.toFloat() * guideWidthFraction / ASPECT_RATIO) / height.toFloat()
 
         val left = (1f - guideWidthFraction) / 2f
         val right = left + guideWidthFraction
-        val top = CENTER_Y_FRACTION - guideHeightFraction / 2f
-        val bottom = CENTER_Y_FRACTION + guideHeightFraction / 2f
+        val top = (CENTER_Y_FRACTION - guideHeightFraction / 2f).coerceIn(0f, 1f)
+        val bottom = (CENTER_Y_FRACTION + guideHeightFraction / 2f).coerceIn(0f, 1f)
 
         return RectF(left, top, right, bottom)
     }
