@@ -78,9 +78,17 @@ class WebViewActivity : AppCompatActivity() {
         binding.btnManageCredentials.setOnClickListener { showManageCredentialsDialog() }
 
         buildPriceTable()
-        binding.btnPriceList.setOnClickListener { binding.priceOverlay.visibility = android.view.View.VISIBLE }
-        binding.btnClosePriceList.setOnClickListener { binding.priceOverlay.visibility = android.view.View.GONE }
-        binding.priceOverlay.setOnClickListener { binding.priceOverlay.visibility = android.view.View.GONE }
+        binding.btnPriceList.setOnClickListener { togglePriceOverlay(show = true) }
+        binding.btnClosePriceList.setOnClickListener { togglePriceOverlay(show = false) }
+        binding.priceOverlay.setOnClickListener { togglePriceOverlay(show = false) }
+    }
+
+    /** Bật/tắt lớp phủ bảng giá, đồng thời ẩn/hiện 2 nút nổi (Giá, Quản lý mật khẩu) cho gọn màn hình. */
+    private fun togglePriceOverlay(show: Boolean) {
+        binding.priceOverlay.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
+        val buttonsVisibility = if (show) android.view.View.GONE else android.view.View.VISIBLE
+        binding.btnPriceList.visibility = buttonsVisibility
+        binding.btnManageCredentials.visibility = buttonsVisibility
     }
 
     /** Dựng bảng giá theo loại xe từ PriceData, hiển thị trong lớp phủ mờ khi bấm nút "Giá". */

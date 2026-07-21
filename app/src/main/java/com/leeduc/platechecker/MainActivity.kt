@@ -212,13 +212,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Tải ảnh có sẵn từ thư viện thay cho chụp trực tiếp. Vì không có khung ngắm
-     * để canh, dùng nguyên ảnh đã sửa chiều xoay (không cắt) để đưa vào OCR.
+     * Tải ảnh có sẵn từ thư viện thay cho chụp trực tiếp. Ảnh này chính là ảnh do
+     * app tự chụp trước đó (lưu trong DCIM/PlateChecker) nên vùng biển số LUÔN nằm
+     * đúng vị trí khung ngắm cố định - áp dụng lại đúng phép cắt giống lúc chụp
+     * trực tiếp, không dùng nguyên cả ảnh để OCR.
      */
     private fun loadImageFromUri(uri: Uri) {
         val rotated = fixOrientation(uri)
-        lastPlateCropBitmap = rotated
-        showCapturedResult(rotated)
+        val plateCrop = cropToGuideRegion(rotated)
+        lastPlateCropBitmap = plateCrop
+        showCapturedResult(plateCrop)
     }
 
     private fun showCapturedResult(bitmap: Bitmap) {
