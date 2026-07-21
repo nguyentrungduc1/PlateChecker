@@ -52,27 +52,56 @@
         android:id="@+id/bottomBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center"
+        android:orientation="vertical"
         android:padding="16dp"
         android:background="#222222"
         app:layout_constraintBottom_toBottomOf="parent">
 
-        <Button
-            android:id="@+id/btnCapture"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:text="Chụp ảnh" />
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
 
-        <Button
-            android:id="@+id/btnCheck"
-            android:layout_width="0dp"
+            <Button
+                android:id="@+id/btnCapture"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:text="Chụp ảnh" />
+
+            <Button
+                android:id="@+id/btnLoadImage"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Load ảnh" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:enabled="false"
-            android:text="Check" />
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnCheck"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:enabled="false"
+                android:text="Check" />
+
+            <Button
+                android:id="@+id/btnBrowse"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Duyệt" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

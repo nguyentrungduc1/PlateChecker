@@ -38,6 +38,12 @@ class WebViewActivity : AppCompatActivity() {
 
         pendingPlateCode = intent.getStringExtra(EXTRA_PLATE_CODE) ?: ""
 
+        val plateImagePath = intent.getStringExtra(EXTRA_PLATE_IMAGE_PATH)
+        if (plateImagePath != null) {
+            val plateBitmap = android.graphics.BitmapFactory.decodeFile(plateImagePath)
+            if (plateBitmap != null) binding.imgPlate.setImageBitmap(plateBitmap)
+        }
+
         val webView: WebView = binding.webView
 
         webView.settings.javaScriptEnabled = true
@@ -70,6 +76,63 @@ class WebViewActivity : AppCompatActivity() {
         webView.loadUrl(TARGET_URL)
 
         binding.btnManageCredentials.setOnClickListener { showManageCredentialsDialog() }
+
+        buildPriceTable()
+        binding.btnPriceList.setOnClickListener { binding.priceOverlay.visibility = android.view.View.VISIBLE }
+        binding.btnClosePriceList.setOnClickListener { binding.priceOverlay.visibility = android.view.View.GONE }
+        binding.priceOverlay.setOnClickListener { binding.priceOverlay.visibility = android.view.View.GONE }
+    }
+
+    /** Dựng bảng giá theo loại xe từ PriceData, hiển thị trong lớp phủ mờ khi bấm nút "Giá". */
+    private fun buildPriceTable() {
+        val container = binding.priceTableContainer
+        container.removeAllViews()
+
+        val headerColor = android.graphics.Color.parseColor("#FFC400")
+        val rowTextColor = android.graphics.Color.WHITE
+        val altRowBg = android.graphics.Color.parseColor("#22FFFFFF")
+
+        fun cell(text: String, weight: Float, isHeader: Boolean): android.widget.TextView {
+            return android.widget.TextView(this).apply {
+                this.text = text
+                setTextColor(if (isHeader) headerColor else rowTextColor)
+                textSize = if (isHeader) 13f else 13f
+                if (isHeader) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(12, 10, 12, 10)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight)
+                gravity = if (weight > 1.5f) android.view.Gravity.START else android.view.Gravity.END
+            }
+        }
+
+        fun addRow(name: String, l1: String, l2: String, l3: String, l4: String, l5: String, isHeader: Boolean, rowIndex: Int) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                if (!isHeader && rowIndex % 2 == 1) setBackgroundColor(altRowBg)
+            }
+            row.addView(cell(name, 2.2f, isHeader))
+            row.addView(cell(l1, 1f, isHeader))
+            row.addView(cell(l2, 1f, isHeader))
+            row.addView(cell(l3, 1f, isHeader))
+            row.addView(cell(l4, 1f, isHeader))
+            row.addView(cell(l5, 1f, isHeader))
+            container.addView(row)
+        }
+
+        for (section in PriceData.sections) {
+            val sectionTitle = android.widget.TextView(this).apply {
+                text = section.title
+                setTextColor(headerColor)
+                textSize = 15f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(8, 24, 8, 8)
+            }
+            container.addView(sectionTitle)
+
+            addRow("Trạm thu phí", "Loại 1", "Loại 2", "Loại 3", "Loại 4", "Loại 5", isHeader = true, rowIndex = 0)
+            section.rows.forEachIndexed { index, row ->
+                addRow(row.stationName, row.loai1, row.loai2, row.loai3, row.loai4, row.loai5, isHeader = false, rowIndex = index)
+            }
+        }
     }
 
     /** Cầu nối JS -> Android, dùng để hỏi lưu mật khẩu giống thanh nhắc của Chrome. */
@@ -315,6 +378,10 @@ class WebViewActivity : AppCompatActivity() {
                         return;
                     }
 
+                    if (!PLATE_VALUE) {
+                        return; // bấm "Duyệt" thẳng, chưa có biển số để điền
+                    }
+
                     var plateField = findPlateField();
                     if (plateField) {
                         setValue(plateField, PLATE_VALUE);
@@ -332,6 +399,7 @@ class WebViewActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_PLATE_CODE = "extra_plate_code"
+        const val EXTRA_PLATE_IMAGE_PATH = "extra_plate_image_path"
         private const val TARGET_URL = "https://vos.vetc.com.vn/"
     }
 }

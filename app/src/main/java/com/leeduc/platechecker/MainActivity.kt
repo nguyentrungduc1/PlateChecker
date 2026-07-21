@@ -15,6 +15,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.AspectRatio
@@ -26,6 +27,8 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import com.leeduc.platechecker.databinding.ActivityMainBinding
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
@@ -46,6 +49,12 @@ class MainActivity : AppCompatActivity() {
             if (cameraGranted) startCamera() else {
                 Toast.makeText(this, "Cần quyền Camera để chụp ảnh", Toast.LENGTH_LONG).show()
             }
+        }
+
+    // Chọn ảnh có sẵn từ thư viện (dùng Photo Picker hệ thống, không cần xin quyền đọc bộ nhớ)
+    private val pickImageLauncher =
+        registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            if (uri != null) loadImageFromUri(uri)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,7 +84,18 @@ class MainActivity : AppCompatActivity() {
                 takePhoto()
             }
         }
+
+        binding.btnLoadImage.setOnClickListener {
+            pickImageLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        }
+
         binding.btnCheck.setOnClickListener { runCheck() }
+
+        // "Duyệt": vào thẳng trang vos.vetc.com.vn, không chờ OCR, kèm ảnh biển số
+        // (nếu đã có) để xem đối chiếu ngay trong lúc thao tác trên web.
+        binding.btnBrowse.setOnClickListener { openBrowserDirectly() }
     }
 
     /** Quay lại xem camera trực tiếp để canh và chụp tấm tiếp theo. */
@@ -146,9 +166,9 @@ class MainActivity : AppCompatActivity() {
         } else {
             // Android 9 trở xuống: ghi trực tiếp vào thư mục DCIM công khai
             val dcimDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
-            val targetDir = java.io.File(dcimDir, "PlateChecker")
+            val targetDir = File(dcimDir, "PlateChecker")
             if (!targetDir.exists()) targetDir.mkdirs()
-            val photoFile = java.io.File(targetDir, fileName)
+            val photoFile = File(targetDir, fileName)
             outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
         }
 
@@ -185,19 +205,32 @@ class MainActivity : AppCompatActivity() {
 
                     Toast.makeText(baseContext, "Đã lưu vào DCIM/PlateChecker", Toast.LENGTH_SHORT).show()
 
-                    binding.previewView.visibility = android.view.View.GONE
-                    binding.guideOverlay.visibility = android.view.View.GONE
-                    binding.imgPreview.visibility = android.view.View.VISIBLE
-                    // Hiện đúng phần ảnh sẽ được OCR để người dùng biết có canh đúng biển số không
-                    binding.imgPreview.setImageBitmap(plateCrop)
-
-                    isShowingCapturedPhoto = true
-                    binding.btnCapture.text = "Chụp lại"
-                    binding.btnCheck.isEnabled = true
-                    binding.txtResult.text = ""
+                    showCapturedResult(plateCrop)
                 }
             }
         )
+    }
+
+    /**
+     * Tải ảnh có sẵn từ thư viện thay cho chụp trực tiếp. Vì không có khung ngắm
+     * để canh, dùng nguyên ảnh đã sửa chiều xoay (không cắt) để đưa vào OCR.
+     */
+    private fun loadImageFromUri(uri: Uri) {
+        val rotated = fixOrientation(uri)
+        lastPlateCropBitmap = rotated
+        showCapturedResult(rotated)
+    }
+
+    private fun showCapturedResult(bitmap: Bitmap) {
+        binding.previewView.visibility = android.view.View.GONE
+        binding.guideOverlay.visibility = android.view.View.GONE
+        binding.imgPreview.visibility = android.view.View.VISIBLE
+        binding.imgPreview.setImageBitmap(bitmap)
+
+        isShowingCapturedPhoto = true
+        binding.btnCapture.text = "Chụp lại"
+        binding.btnCheck.isEnabled = true
+        binding.txtResult.text = ""
     }
 
     /**
@@ -301,6 +334,18 @@ class MainActivity : AppCompatActivity() {
         return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
     }
 
+    /** Lưu tạm ảnh biển số vào cache của app, dùng để truyền qua WebViewActivity (tránh Intent quá lớn). */
+    private fun savePlateImageToCache(bitmap: Bitmap): String? {
+        return try {
+            val file = File(cacheDir, "plate_preview.jpg")
+            FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out) }
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Không lưu được ảnh xem trước cho WebView", e)
+            null
+        }
+    }
+
     private fun runCheck() {
         val plateBitmap = lastPlateCropBitmap
         if (plateBitmap == null) {
@@ -320,11 +365,25 @@ class MainActivity : AppCompatActivity() {
 
             binding.txtResult.text = "Kết quả: $result"
 
-            // Mở WebView, tự điền vào ô đầu tiên của trang vos.vetc.com.vn
             val intent = Intent(this, WebViewActivity::class.java)
             intent.putExtra(WebViewActivity.EXTRA_PLATE_CODE, result)
+            savePlateImageToCache(plateBitmap)?.let { path ->
+                intent.putExtra(WebViewActivity.EXTRA_PLATE_IMAGE_PATH, path)
+            }
             startActivity(intent)
         }
+    }
+
+    /** Nút "Duyệt": vào thẳng trang web, không chờ OCR. */
+    private fun openBrowserDirectly() {
+        val intent = Intent(this, WebViewActivity::class.java)
+        intent.putExtra(WebViewActivity.EXTRA_PLATE_CODE, "")
+        lastPlateCropBitmap?.let { bmp ->
+            savePlateImageToCache(bmp)?.let { path ->
+                intent.putExtra(WebViewActivity.EXTRA_PLATE_IMAGE_PATH, path)
+            }
+        }
+        startActivity(intent)
     }
 
     override fun onResume() {
