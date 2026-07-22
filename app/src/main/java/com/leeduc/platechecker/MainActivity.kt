@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     // quay lại app sau khi chọn ảnh (cả 2 đều gây onPause/onResume như nhau,
     // nên không thể dùng chung isShowingCapturedPhoto để phân biệt).
     private var pendingResetAfterWebView = false
+    private var flashEnabled = true
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -100,6 +101,12 @@ class MainActivity : AppCompatActivity() {
         // "Duyệt": vào thẳng trang vos.vetc.com.vn, không chờ OCR, kèm ảnh biển số
         // (nếu đã có) để xem đối chiếu ngay trong lúc thao tác trên web.
         binding.btnBrowse.setOnClickListener { openBrowserDirectly() }
+
+        binding.btnFlashToggle.setOnClickListener {
+            flashEnabled = !flashEnabled
+            imageCapture?.flashMode = if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+            binding.btnFlashToggle.text = if (flashEnabled) "⚡ Flash: Bật" else "⚡ Flash: Tắt"
+        }
     }
 
     /** Quay lại xem camera trực tiếp để canh và chụp tấm tiếp theo. */
@@ -127,12 +134,12 @@ class MainActivity : AppCompatActivity() {
                     it.setSurfaceProvider(binding.previewView.surfaceProvider)
                 }
 
-            // Ảnh chất lượng cao + luôn bật đèn flash khi chụp
+            // Ảnh chất lượng cao + đèn flash bật/tắt theo lựa chọn của người dùng
             imageCapture = ImageCapture.Builder()
                 .setTargetAspectRatio(AspectRatio.RATIO_4_3)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .setJpegQuality(100)
-                .setFlashMode(ImageCapture.FLASH_MODE_ON)
+                .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
                 .build()
 
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
