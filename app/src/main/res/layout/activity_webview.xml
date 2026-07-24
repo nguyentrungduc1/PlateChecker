@@ -41,7 +41,7 @@
         android:textSize="14sp"
         android:background="@drawable/bg_floating_button"
         android:textColor="#FFFFFF"
-        app:layout_constraintTop_toBottomOf="@id/imgPlate"
+        app:layout_constraintTop_toTopOf="@id/imgPlate"
         app:layout_constraintStart_toStartOf="parent" />
 
     <Button
@@ -58,7 +58,7 @@
         android:textSize="14sp"
         android:background="@drawable/bg_floating_button"
         android:textColor="#FFFFFF"
-        app:layout_constraintTop_toBottomOf="@id/imgPlate"
+        app:layout_constraintTop_toTopOf="@id/imgPlate"
         app:layout_constraintEnd_toEndOf="parent" />
 
     <Button
@@ -75,7 +75,7 @@
         android:textSize="14sp"
         android:background="@drawable/bg_floating_button"
         android:textColor="#FFFFFF"
-        app:layout_constraintTop_toBottomOf="@id/imgPlate"
+        app:layout_constraintTop_toTopOf="@id/imgPlate"
         app:layout_constraintEnd_toStartOf="@id/btnManageCredentials" />
 
     <!-- Lớp phủ bảng giá, độ mờ giống các nút nổi, che toàn màn hình, ẩn theo mặc định -->

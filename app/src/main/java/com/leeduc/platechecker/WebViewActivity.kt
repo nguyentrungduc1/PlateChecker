@@ -79,7 +79,7 @@ class WebViewActivity : AppCompatActivity() {
 
         webView.loadUrl(targetUrl)
 
-        binding.btnRegistryCheck.setOnClickListener { webView.loadUrl(VR_REGISTER_URL) }
+        binding.btnRegistryCheck.setOnClickListener { openRegistrySite() }
         binding.btnManageCredentials.setOnClickListener { showManageCredentialsDialog() }
 
         buildPriceTable()
@@ -95,6 +95,14 @@ class WebViewActivity : AppCompatActivity() {
         binding.btnRegistryCheck.visibility = buttonsVisibility
         binding.btnPriceList.visibility = buttonsVisibility
         binding.btnManageCredentials.visibility = buttonsVisibility
+    }
+
+    private fun openRegistrySite() {
+        pendingPlateCode = ""
+        binding.webView.stopLoading()
+        binding.webView.post {
+            binding.webView.loadUrl(VR_REGISTER_URL)
+        }
     }
 
     /** Dựng bảng giá theo loại xe từ PriceData, hiển thị trong lớp phủ mờ khi bấm nút "Giá". */
