@@ -99,10 +99,13 @@ class WebViewActivity : AppCompatActivity() {
 
     private fun openRegistrySite() {
         pendingPlateCode = ""
+        targetUrl = VR_REGISTER_URL
         binding.webView.stopLoading()
-        binding.webView.post {
+        Toast.makeText(this, "Đang mở trang đăng kiểm...", Toast.LENGTH_SHORT).show()
+        binding.webView.loadUrl("about:blank")
+        binding.webView.postDelayed({
             binding.webView.loadUrl(VR_REGISTER_URL)
-        }
+        }, 150)
     }
 
     /** Dựng bảng giá theo loại xe từ PriceData, hiển thị trong lớp phủ mờ khi bấm nút "Giá". */
