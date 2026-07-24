@@ -96,7 +96,8 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        binding.btnCheck.setOnClickListener { runCheck() }
+        binding.btnRegistrationCheck.setOnClickListener { runCheck(VOS_REGISTER_URL) }
+        binding.btnCheck.setOnClickListener { runCheck(VOS_HOME_URL) }
 
         // "Duyệt": vào thẳng trang vos.vetc.com.vn, không chờ OCR, kèm ảnh biển số
         // (nếu đã có) để xem đối chiếu ngay trong lúc thao tác trên web.
@@ -117,6 +118,7 @@ class MainActivity : AppCompatActivity() {
         binding.guideOverlay.visibility = android.view.View.VISIBLE
         binding.btnCapture.text = "Chụp ảnh"
         binding.btnCheck.isEnabled = false
+        binding.btnRegistrationCheck.isEnabled = false
         binding.txtResult.text = ""
         lastPlateCropBitmap = null
     }
@@ -249,6 +251,7 @@ class MainActivity : AppCompatActivity() {
         isShowingCapturedPhoto = true
         binding.btnCapture.text = "Chụp lại"
         binding.btnCheck.isEnabled = true
+        binding.btnRegistrationCheck.isEnabled = true
         binding.txtResult.text = ""
     }
 
@@ -365,7 +368,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun runCheck() {
+    private fun runCheck(targetUrl: String) {
         val plateBitmap = lastPlateCropBitmap
         if (plateBitmap == null) {
             Toast.makeText(this, "Chưa có ảnh để kiểm tra", Toast.LENGTH_SHORT).show()
@@ -374,9 +377,11 @@ class MainActivity : AppCompatActivity() {
 
         binding.txtResult.text = "Đang phân tích biển số..."
         binding.btnCheck.isEnabled = false
+        binding.btnRegistrationCheck.isEnabled = false
 
         PlateAnalyzer.analyze(plateBitmap) { result ->
             binding.btnCheck.isEnabled = true
+            binding.btnRegistrationCheck.isEnabled = true
             if (result == null) {
                 binding.txtResult.text = "Không nhận diện được biển số. Thử chụp lại, canh biển số vào đúng khung vàng."
                 return@analyze
@@ -386,6 +391,7 @@ class MainActivity : AppCompatActivity() {
 
             val intent = Intent(this, WebViewActivity::class.java)
             intent.putExtra(WebViewActivity.EXTRA_PLATE_CODE, result)
+            intent.putExtra(WebViewActivity.EXTRA_TARGET_URL, targetUrl)
             savePlateImageToCache(plateBitmap)?.let { path ->
                 intent.putExtra(WebViewActivity.EXTRA_PLATE_IMAGE_PATH, path)
             }
@@ -398,6 +404,7 @@ class MainActivity : AppCompatActivity() {
     private fun openBrowserDirectly() {
         val intent = Intent(this, WebViewActivity::class.java)
         intent.putExtra(WebViewActivity.EXTRA_PLATE_CODE, "")
+        intent.putExtra(WebViewActivity.EXTRA_TARGET_URL, VOS_HOME_URL)
         lastPlateCropBitmap?.let { bmp ->
             savePlateImageToCache(bmp)?.let { path ->
                 intent.putExtra(WebViewActivity.EXTRA_PLATE_IMAGE_PATH, path)
@@ -425,5 +432,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "PlateChecker"
+        private const val VOS_HOME_URL = "https://vos.vetc.com.vn/"
+        private const val VOS_REGISTER_URL = "https://vos.vetc.com.vn/search-info-register"
     }
 }

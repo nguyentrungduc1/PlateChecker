@@ -29,6 +29,7 @@ class WebViewActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityWebviewBinding
     private var pendingPlateCode: String = ""
+    private var targetUrl: String = TARGET_URL
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,6 +38,7 @@ class WebViewActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         pendingPlateCode = intent.getStringExtra(EXTRA_PLATE_CODE) ?: ""
+        targetUrl = intent.getStringExtra(EXTRA_TARGET_URL) ?: TARGET_URL
 
         val plateImagePath = intent.getStringExtra(EXTRA_PLATE_IMAGE_PATH)
         if (plateImagePath != null) {
@@ -69,12 +71,15 @@ class WebViewActivity : AppCompatActivity() {
                 val savedUser = CredentialStore.getUsername(this@WebViewActivity)
                 val savedPass = CredentialStore.getPassword(this@WebViewActivity)
 
-                runAutoFillScript(webView, pendingPlateCode, savedUser ?: "", savedPass ?: "")
+                if (url?.contains("vos.vetc.com.vn") == true) {
+                    runAutoFillScript(webView, pendingPlateCode, savedUser ?: "", savedPass ?: "")
+                }
             }
         }
 
-        webView.loadUrl(TARGET_URL)
+        webView.loadUrl(targetUrl)
 
+        binding.btnRegistryCheck.setOnClickListener { webView.loadUrl(VR_REGISTER_URL) }
         binding.btnManageCredentials.setOnClickListener { showManageCredentialsDialog() }
 
         buildPriceTable()
@@ -87,6 +92,7 @@ class WebViewActivity : AppCompatActivity() {
     private fun togglePriceOverlay(show: Boolean) {
         binding.priceOverlay.visibility = if (show) android.view.View.VISIBLE else android.view.View.GONE
         val buttonsVisibility = if (show) android.view.View.GONE else android.view.View.VISIBLE
+        binding.btnRegistryCheck.visibility = buttonsVisibility
         binding.btnPriceList.visibility = buttonsVisibility
         binding.btnManageCredentials.visibility = buttonsVisibility
     }
@@ -408,6 +414,8 @@ class WebViewActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_PLATE_CODE = "extra_plate_code"
         const val EXTRA_PLATE_IMAGE_PATH = "extra_plate_image_path"
+        const val EXTRA_TARGET_URL = "extra_target_url"
         private const val TARGET_URL = "https://vos.vetc.com.vn/"
+        private const val VR_REGISTER_URL = "https://gcndangkiem.vr.org.vn/"
     }
 }
