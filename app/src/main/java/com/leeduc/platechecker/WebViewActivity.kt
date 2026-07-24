@@ -2,6 +2,9 @@ package com.leeduc.platechecker
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.webkit.CookieManager
@@ -11,6 +14,7 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import com.leeduc.platechecker.databinding.ActivityWebviewBinding
 
@@ -86,6 +90,19 @@ class WebViewActivity : AppCompatActivity() {
         binding.btnPriceList.setOnClickListener { togglePriceOverlay(show = true) }
         binding.btnClosePriceList.setOnClickListener { togglePriceOverlay(show = false) }
         binding.priceOverlay.setOnClickListener { togglePriceOverlay(show = false) }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (binding.priceOverlay.visibility == android.view.View.VISIBLE) {
+                    togglePriceOverlay(show = false)
+                } else if (binding.webView.canGoBack()) {
+                    binding.webView.goBack()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
     }
 
     /** Bật/tắt lớp phủ bảng giá, đồng thời ẩn/hiện 2 nút nổi (Giá, Quản lý mật khẩu) cho gọn màn hình. */
@@ -99,13 +116,17 @@ class WebViewActivity : AppCompatActivity() {
 
     private fun openRegistrySite() {
         pendingPlateCode = ""
-        targetUrl = VR_REGISTER_URL
-        binding.webView.stopLoading()
         Toast.makeText(this, "Đang mở trang đăng kiểm...", Toast.LENGTH_SHORT).show()
-        binding.webView.loadUrl("about:blank")
-        binding.webView.postDelayed({
+
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(VR_REGISTER_URL)).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            binding.webView.stopLoading()
             binding.webView.loadUrl(VR_REGISTER_URL)
-        }, 150)
+        }
     }
 
     /** Dựng bảng giá theo loại xe từ PriceData, hiển thị trong lớp phủ mờ khi bấm nút "Giá". */
