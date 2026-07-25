@@ -1,11 +1,17 @@
 package com.leeduc.platechecker
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.graphics.Rect
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Nhận dạng ký tự biển số bằng ML Kit Text Recognition (chạy offline trên máy),
@@ -21,7 +27,12 @@ object PlateAnalyzer {
 
     fun analyze(bitmap: Bitmap, callback: (String?) -> Unit) {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        val image = InputImage.fromBitmap(bitmap, 0)
+
+        // Tiền xử lý riêng cho OCR (grayscale + tăng tương phản + khử nhiễu nhẹ).
+        // Bitmap màu gốc vẫn được giữ nguyên để dùng cho bước nhận màu bên dưới,
+        // vì grayscale sẽ phá hết thông tin màu cần thiết.
+        val ocrInputBitmap = preprocessForOcr(bitmap)
+        val image = InputImage.fromBitmap(ocrInputBitmap, 0)
 
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
@@ -40,7 +51,8 @@ object PlateAnalyzer {
                     return@addOnSuccessListener
                 }
 
-                // Hợp nhất bounding box của tất cả block chữ để lấy vùng lấy màu biển số
+                // Hợp nhất bounding box của tất cả block chữ để lấy vùng lấy màu biển số.
+                // Toạ độ này khớp 1:1 với bitmap màu gốc vì tiền xử lý OCR không đổi kích thước ảnh.
                 var unionRect: Rect? = null
                 for (block in visionText.textBlocks) {
                     val box = block.boundingBox ?: continue
@@ -65,13 +77,62 @@ object PlateAnalyzer {
     }
 
     /**
-     * Lấy màu trung bình của vùng chữ (mở rộng nhẹ ra ngoài để bắt được nền biển số
-     * thay vì chỉ chữ đen), rồi phân loại theo HSV.
+     * Tiền xử lý ảnh trước khi đưa vào ML Kit: chuyển xám (grayscale), tăng tương phản,
+     * và khử nhiễu nhẹ (làm mượt nhẹ để giảm hạt nhiễu JPEG mà không làm mất nét chữ).
+     * ML Kit đọc chữ chính xác hơn đáng kể trên ảnh đã được chuẩn hoá kiểu này so với
+     * ảnh màu gốc có độ tương phản thấp / nhiễu do nén JPEG hoặc ánh sáng không đều.
+     */
+    private fun preprocessForOcr(source: Bitmap): Bitmap {
+        // Khử nhiễu nhẹ: thu nhỏ rồi phóng to lại bằng nội suy song tuyến tính (bilinear).
+        // Đây là cách làm mượt ảnh rẻ và nhanh, tương đương một lớp làm mờ Gaussian nhẹ,
+        // đủ để giảm hạt nhiễu mà không cần viết vòng lặp convolution thủ công tốn CPU.
+        val denoiseScale = 0.85f
+        val smallW = max(1, (source.width * denoiseScale).toInt())
+        val smallH = max(1, (source.height * denoiseScale).toInt())
+        val shrunk = Bitmap.createScaledBitmap(source, smallW, smallH, true)
+        val denoised = Bitmap.createScaledBitmap(shrunk, source.width, source.height, true)
+
+        // Grayscale + tăng tương phản bằng ColorMatrix, vẽ qua Canvas (nhanh, không cần
+        // duyệt từng pixel thủ công).
+        val contrastFactor = 1.35f // >1 = tăng tương phản
+        val translate = (-0.5f * contrastFactor + 0.5f) * 255f
+
+        val colorMatrix = ColorMatrix().apply {
+            setSaturation(0f) // grayscale
+        }
+        val contrastMatrix = ColorMatrix(
+            floatArrayOf(
+                contrastFactor, 0f, 0f, 0f, translate,
+                0f, contrastFactor, 0f, 0f, translate,
+                0f, 0f, contrastFactor, 0f, translate,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        colorMatrix.postConcat(contrastMatrix)
+
+        val result = Bitmap.createBitmap(denoised.width, denoised.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            colorFilter = ColorMatrixColorFilter(colorMatrix)
+        }
+        canvas.drawBitmap(denoised, 0f, 0f, paint)
+
+        return result
+    }
+
+    /**
+     * Xác định màu NỀN biển số (không phải màu trung bình cả vùng) rồi phân loại theo HSV.
+     * Cách làm: lấy mẫu pixel trong vùng quanh chữ, sau đó LOẠI BỎ các pixel quá tối
+     * (nhiều khả năng là nét chữ đen) và quá sáng (nhiều khả năng là vệt loá đèn flash),
+     * chỉ giữ lại dải pixel ở giữa - đại diện cho màu nền thật của biển số - rồi lấy
+     * TRUNG VỊ (median, không phải trung bình) trên tập đã lọc để giảm ảnh hưởng của
+     * bóng đổ, viền, hoặc màu thân xe lọt vào rìa vùng cắt.
      */
     private fun classifyPlateColor(bitmap: Bitmap, textRect: Rect): Char {
-        // Mở rộng vùng cắt ra khoảng 15% mỗi chiều để lấy được nền xung quanh chữ
-        val padX = (textRect.width() * 0.15f).toInt()
-        val padY = (textRect.height() * 0.6f).toInt()
+        // Giảm padding so với trước đây (0.6f) để tránh lấy lem sang cản trước/thân xe,
+        // chỉ mở rộng vừa đủ để bắt được nền ngay sát chữ.
+        val padX = (textRect.width() * 0.12f).toInt()
+        val padY = (textRect.height() * 0.30f).toInt()
 
         val left = (textRect.left - padX).coerceIn(0, bitmap.width - 1)
         val top = (textRect.top - padY).coerceIn(0, bitmap.height - 1)
@@ -84,54 +145,61 @@ object PlateAnalyzer {
 
         val cropped = Bitmap.createBitmap(bitmap, left, top, cropWidth, cropHeight)
 
-        var rSum = 0L
-        var gSum = 0L
-        var bSum = 0L
-        var count = 0L
+        val stepX = (cropWidth / 80).coerceAtLeast(1)
+        val stepY = (cropHeight / 80).coerceAtLeast(1)
 
-        // Lấy mẫu để tránh duyệt từng pixel nếu ảnh lớn
-        val stepX = (cropWidth / 60).coerceAtLeast(1)
-        val stepY = (cropHeight / 60).coerceAtLeast(1)
+        data class Sample(val r: Int, val g: Int, val b: Int, val luma: Int)
 
+        val samples = ArrayList<Sample>()
         var y = 0
         while (y < cropHeight) {
             var x = 0
             while (x < cropWidth) {
                 val pixel = cropped.getPixel(x, y)
-                rSum += Color.red(pixel)
-                gSum += Color.green(pixel)
-                bSum += Color.blue(pixel)
-                count++
+                val r = Color.red(pixel)
+                val g = Color.green(pixel)
+                val b = Color.blue(pixel)
+                val luma = (0.299f * r + 0.587f * g + 0.114f * b).toInt()
+                samples.add(Sample(r, g, b, luma))
                 x += stepX
             }
             y += stepY
         }
 
-        if (count == 0L) return 'T'
+        if (samples.isEmpty()) return 'T'
 
-        val avgR = (rSum / count).toInt()
-        val avgG = (gSum / count).toInt()
-        val avgB = (bSum / count).toInt()
+        // Sắp xếp theo độ sáng để loại bỏ 2 đầu: dải tối nhất (chữ đen / bóng đổ) và
+        // dải sáng nhất (vệt loá đèn flash), chỉ giữ lại dải giữa đại diện cho nền biển số.
+        val sortedByLuma = samples.sortedBy { it.luma }
+        val lowerCut = (sortedByLuma.size * 0.35f).toInt()
+        val upperCut = (sortedByLuma.size * 0.90f).toInt()
+        val backgroundSamples = sortedByLuma.subList(
+            min(lowerCut, sortedByLuma.size - 1),
+            max(upperCut, lowerCut + 1).coerceAtMost(sortedByLuma.size)
+        )
+
+        val filtered = if (backgroundSamples.isNotEmpty()) backgroundSamples else sortedByLuma
+
+        // Trung vị từng kênh màu trên tập đã lọc, ổn định hơn trung bình khi còn sót outlier.
+        val medianR = filtered.map { it.r }.sorted()[filtered.size / 2]
+        val medianG = filtered.map { it.g }.sorted()[filtered.size / 2]
+        val medianB = filtered.map { it.b }.sorted()[filtered.size / 2]
 
         val hsv = FloatArray(3)
-        Color.RGBToHSV(avgR, avgG, avgB, hsv)
+        Color.RGBToHSV(medianR, medianG, medianB, hsv)
         val hue = hsv[0]        // 0-360
         val saturation = hsv[1] // 0-1
         val value = hsv[2]      // 0-1
 
         return when {
             // Trắng: sáng và gần như không có màu (bão hòa thấp)
-            value > 0.6f && saturation < 0.25f -> 'T'
-            // Vàng: hue khoảng 35-70 độ, đủ bão hòa
-            hue in 30f..75f && saturation > 0.25f -> 'V'
-            // Xanh dương: hue khoảng 190-250 độ
-            hue in 170f..260f -> 'X'
-            // Mặc định: chọn theo màu gần nhất trong 3 lựa chọn dựa trên kênh trội
-            else -> when {
-                avgB > avgR && avgB > avgG -> 'X'
-                avgR > 180 && avgG > 150 && avgB < 120 -> 'V'
-                else -> 'T'
-            }
+            value > 0.55f && saturation < 0.25f -> 'T'
+            // Vàng: hue khoảng 30-75 độ, đủ bão hòa
+            hue in 30f..75f && saturation > 0.30f -> 'V'
+            // Xanh dương: hue khoảng 190-250 độ, đủ bão hòa
+            hue in 190f..250f && saturation > 0.30f -> 'X'
+            // Không rơi rõ vào trường hợp nào -> mặc định về trắng (an toàn hơn đoán bừa)
+            else -> 'T'
         }
     }
 }
