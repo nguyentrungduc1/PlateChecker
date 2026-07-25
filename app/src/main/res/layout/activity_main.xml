@@ -82,16 +82,6 @@
             android:layout_marginBottom="6dp">
 
             <Button
-                android:id="@+id/btnLoadImage"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:layout_marginEnd="6dp"
-                android:minHeight="0dp"
-                android:text="Load ảnh"
-                android:textSize="13sp" />
-
-            <Button
                 android:id="@+id/btnBrowse"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
@@ -99,6 +89,16 @@
                 android:layout_marginEnd="6dp"
                 android:minHeight="0dp"
                 android:text="Duyệt"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btnLoadImage"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:minHeight="0dp"
+                android:text="Load ảnh"
                 android:textSize="13sp" />
 
             <Button

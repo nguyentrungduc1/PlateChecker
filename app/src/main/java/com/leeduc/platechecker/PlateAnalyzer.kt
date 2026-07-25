@@ -19,9 +19,10 @@ import kotlin.math.min
  * bao quanh vùng chữ nhận diện được, rồi ghép hậu tố màu vào cuối chuỗi ký tự.
  *
  * Quy ước hậu tố:
- *   Vàng      -> V
+ *   Trắng      -> T
+ *   Vàng       -> V
  *   Xanh dương -> X
- *   Trắng     -> T
+ *   Đỏ         -> (không có hậu tố, giữ nguyên chuỗi ký tự)
  */
 object PlateAnalyzer {
 
@@ -66,7 +67,7 @@ object PlateAnalyzer {
                     classifyPlateColor(bitmap, unionRect)
                 } else {
                     // Không xác định được vùng -> mặc định để trắng, người dùng có thể sửa tay
-                    'T'
+                    "T"
                 }
 
                 callback(rawChars + colorSuffix)
@@ -128,7 +129,7 @@ object PlateAnalyzer {
      * TRUNG VỊ (median, không phải trung bình) trên tập đã lọc để giảm ảnh hưởng của
      * bóng đổ, viền, hoặc màu thân xe lọt vào rìa vùng cắt.
      */
-    private fun classifyPlateColor(bitmap: Bitmap, textRect: Rect): Char {
+    private fun classifyPlateColor(bitmap: Bitmap, textRect: Rect): String {
         // Giảm padding so với trước đây (0.6f) để tránh lấy lem sang cản trước/thân xe,
         // chỉ mở rộng vừa đủ để bắt được nền ngay sát chữ.
         val padX = (textRect.width() * 0.12f).toInt()
@@ -141,7 +142,7 @@ object PlateAnalyzer {
 
         val cropWidth = right - left
         val cropHeight = bottom - top
-        if (cropWidth <= 0 || cropHeight <= 0) return 'T'
+        if (cropWidth <= 0 || cropHeight <= 0) return "T"
 
         val cropped = Bitmap.createBitmap(bitmap, left, top, cropWidth, cropHeight)
 
@@ -166,7 +167,7 @@ object PlateAnalyzer {
             y += stepY
         }
 
-        if (samples.isEmpty()) return 'T'
+        if (samples.isEmpty()) return "T"
 
         // Sắp xếp theo độ sáng để loại bỏ 2 đầu: dải tối nhất (chữ đen / bóng đổ) và
         // dải sáng nhất (vệt loá đèn flash), chỉ giữ lại dải giữa đại diện cho nền biển số.
@@ -191,15 +192,19 @@ object PlateAnalyzer {
         val saturation = hsv[1] // 0-1
         val value = hsv[2]      // 0-1
 
+        val hasEnoughColor = saturation > 0.30f
+
         return when {
-            // Trắng: sáng và gần như không có màu (bão hòa thấp)
-            value > 0.55f && saturation < 0.25f -> 'T'
+            // Trắng: sáng và gần như không có màu (bão hòa thấp) -> ưu tiên xét trước
+            value > 0.55f && saturation < 0.25f -> "T"
+            // Đỏ: hue quanh mốc 0 độ (đỏ nằm ở 2 đầu vòng tròn màu: 0-15 hoặc 345-360)
+            hasEnoughColor && (hue <= 15f || hue >= 345f) -> "" // không thêm hậu tố
             // Vàng: hue khoảng 30-75 độ, đủ bão hòa
-            hue in 30f..75f && saturation > 0.30f -> 'V'
+            hasEnoughColor && hue in 30f..75f -> "V"
             // Xanh dương: hue khoảng 190-250 độ, đủ bão hòa
-            hue in 190f..250f && saturation > 0.30f -> 'X'
+            hasEnoughColor && hue in 190f..250f -> "X"
             // Không rơi rõ vào trường hợp nào -> mặc định về trắng (an toàn hơn đoán bừa)
-            else -> 'T'
+            else -> "T"
         }
     }
 }
