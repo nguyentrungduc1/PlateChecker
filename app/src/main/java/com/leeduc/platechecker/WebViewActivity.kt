@@ -120,128 +120,101 @@ class WebViewActivity : AppCompatActivity() {
     }
 
     private fun openRegistrySite() {
-        Toast.makeText(this, "Đang gọi API lấy biển số + số khung...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Đang lấy biển số từ trang và gọi API tra đăng kiểm...", Toast.LENGTH_SHORT).show()
         extractRegistryDataThenNavigate(binding.webView)
     }
 
     /**
-     * [Hướng B - gọi thẳng API] Thay vì "đoán" biển số/số khung từ cấu trúc HTML hiển thị,
-     * hàm này chạy `fetch()` ngay trong WebView để gọi thẳng API nội bộ của VOS:
-     *   GET /api/360/registration-info?plate=<biển số>
-     * Vì fetch chạy cùng origin (vos.vetc.com.vn) và cùng tiến trình với trang đang mở,
-     * nó tự động dùng chung cookie/phiên đăng nhập hiện có (thêm `credentials: 'include'`
-     * để chắc chắn cookie luôn được gửi kèm) - không cần đăng nhập lại, không cần API key riêng.
+     * Đọc biển số ĐANG HIỂN THỊ trong ô tìm kiếm trên trang VOS (KHÔNG dùng lại chuỗi
+     * OCR lưu trong app, vì OCR có thể đọc sai và bạn có thể đã tự sửa tay biển số
+     * trước khi bấm tìm - giá trị đúng nhất luôn là giá trị đang có trên trang).
      *
-     * Kết quả trả về là JSON thật của hệ thống, lấy đúng 2 trường:
-     *   - plate_registry: biển số đăng ký (vd "73A-196.23T")
-     *   - frame_number:   số khung đầy đủ (vd "RNYBB41A6LC209211")
-     * nên không còn phụ thuộc vào cách trang hiển thị (label, DOM, panel ẩn/hiện...).
+     * Sau đó gọi thẳng API thật của VETC (/api/360/registration-info?plate=...) bằng
+     * fetch() chạy NGAY TRONG trang vos.vetc.com.vn đang mở - tận dụng đúng cookie
+     * phiên đăng nhập hiện có, không cần soi/dò cấu trúc HTML kết quả nữa.
+     *
+     * Mọi lỗi (không tìm thấy ô biển số, HTTP 403, mất mạng, JSON không đọc được...)
+     * đều được bắt và báo về Android rõ ràng qua tham số error, không để rơi vào im lặng.
      */
     private fun extractRegistryDataThenNavigate(webView: WebView) {
         val js = """
-            (function() {
-                function norm(s) { return (s || '').toLowerCase(); }
-
+            (async function() {
                 function reportError(message) {
                     if (window.AndroidCredentialBridge) {
-                        window.AndroidCredentialBridge.onRegistryDataError(message);
+                        window.AndroidCredentialBridge.onRegistryDataExtracted('', '', message);
                     }
                 }
+                function reportSuccess(plateRegistry, frameNumber) {
+                    if (window.AndroidCredentialBridge) {
+                        window.AndroidCredentialBridge.onRegistryDataExtracted(plateRegistry || '', frameNumber || '', '');
+                    }
+                }
+                function isVisible(el) {
+                    if (!el) return false;
+                    var style = window.getComputedStyle(el);
+                    return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetParent !== null;
+                }
+                function getCurrentPlateInputValue() {
+                    var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
+                    var visible = inputs.filter(isVisible);
+                    for (var i = 0; i < visible.length; i++) {
+                        var el = visible[i];
+                        var hint = ((el.name || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '')).toLowerCase();
+                        if ((hint.indexOf('bien') !== -1 || hint.indexOf('etag') !== -1) && el.value) {
+                            return el.value;
+                        }
+                    }
+                    for (var j = 0; j < visible.length; j++) {
+                        var el2 = visible[j];
+                        var typeOk = !el2.type || ['text', 'search', 'tel', ''].indexOf(el2.type) !== -1;
+                        if (typeOk && el2.value) return el2.value;
+                    }
+                    return '';
+                }
 
-                function proceedWithUrl(apiUrl) {
-                    fetch(apiUrl, {
+                var plateValue = getCurrentPlateInputValue();
+                if (!plateValue) {
+                    reportError('Không tìm thấy ô biển số đang nhập trên trang. Bạn tra cứu biển số trên trang VOS trước rồi mới bấm Check.');
+                    return;
+                }
+
+                try {
+                    var url = '/api/360/registration-info?plate=' + encodeURIComponent(plateValue);
+                    var res = await fetch(url, {
                         method: 'GET',
                         credentials: 'include',
                         headers: { 'Accept': 'application/json' }
-                    })
-                    .then(function(res) {
-                        if (!res.ok) throw new Error('HTTP ' + res.status);
-                        return res.json();
-                    })
-                    .then(function(data) {
-                        var plateRegistry = (data && data.plate_registry) ? String(data.plate_registry) : '';
-                        var frameNumber = (data && data.frame_number) ? String(data.frame_number) : '';
-
-                        if (!plateRegistry || !frameNumber) {
-                            reportError('API trả về thiếu biển số hoặc số khung.');
-                            return;
-                        }
-
-                        if (window.AndroidCredentialBridge) {
-                            window.AndroidCredentialBridge.onRegistryDataExtracted(plateRegistry, frameNumber);
-                        }
-                    })
-                    .catch(function(err) {
-                        reportError('Gọi API tra cứu thất bại: ' + (err && err.message ? err.message : err));
                     });
-                }
 
-                // Cách 1 (đáng tin nhất): trang VOS tự gọi /api/360/registration-info khi
-                // người dùng bấm tra cứu - lấy đúng URL request đó từ Resource Timing của
-                // trình duyệt (không đoán tên field, không đoán định dạng biển số).
-                function findLastRegistrationInfoUrl() {
-                    try {
-                        var entries = performance.getEntriesByType('resource') || [];
-                        var matches = entries.filter(function(e) {
-                            return e.name.indexOf('/api/360/registration-info') !== -1;
-                        });
-                        if (matches.length === 0) return null;
-                        matches.sort(function(a, b) { return b.startTime - a.startTime; });
-                        return matches[0].name;
-                    } catch (e) {
-                        return null;
-                    }
-                }
-
-                // Cách 2 (dự phòng): quét input hiển thị có giá trị (không chỉ giới hạn tên
-                // field chứa "bien"/"etag" - vì trang có thể dùng tên khác), hoặc lấy từ URL.
-                function guessPlateFromInputs() {
-                    var inputs = Array.prototype.slice.call(document.querySelectorAll('input, textarea'));
-                    var keywords = ['bien', 'etag', 'plate', 'keyword', 'search', 'key', 'query', 'q'];
-                    for (var i = 0; i < inputs.length; i++) {
-                        var el = inputs[i];
-                        if (!el.value) continue;
-                        var hint = norm(el.name) + ' ' + norm(el.id) + ' ' + norm(el.placeholder);
-                        for (var k = 0; k < keywords.length; k++) {
-                            if (hint.indexOf(keywords[k]) !== -1) return el.value;
+                    if (!res.ok) {
+                        if (res.status === 403) {
+                            reportError('API từ chối truy cập (403) - có thể phiên đăng nhập đã hết hạn, thử đăng nhập lại rồi Check lại.');
+                        } else {
+                            reportError('Gọi API thất bại, mã lỗi HTTP ' + res.status);
                         }
+                        return;
                     }
-                    for (var j = 0; j < inputs.length; j++) {
-                        var el2 = inputs[j];
-                        if (el2.value && el2.offsetParent !== null) return el2.value;
-                    }
-                    return '';
-                }
 
-                function guessPlateFromUrl() {
+                    var data;
                     try {
-                        var url = new URL(window.location.href);
-                        var candidates = ['plate', 'bienso', 'keyword', 'key', 'search', 'q'];
-                        for (var i = 0; i < candidates.length; i++) {
-                            var v = url.searchParams.get(candidates[i]);
-                            if (v) return v;
-                        }
-                    } catch (e) {}
-                    return '';
-                }
+                        data = await res.json();
+                    } catch (parseErr) {
+                        reportError('Không đọc được dữ liệu trả về (không phải JSON hợp lệ)');
+                        return;
+                    }
 
-                var lastUrl = findLastRegistrationInfoUrl();
-                if (lastUrl) {
-                    proceedWithUrl(lastUrl);
-                    return;
-                }
+                    var plateRegistry = data && data.plate_registry ? String(data.plate_registry) : '';
+                    var frameNumber = data && data.frame_number ? String(data.frame_number) : '';
 
-                var rawPlate = guessPlateFromInputs() || guessPlateFromUrl();
-                if (!rawPlate) {
-                    reportError('Chưa thấy dữ liệu tra cứu nào trên trang. Bạn tra cứu 1 biển số trên VOS xong rồi bấm lại nút này.');
-                    return;
-                }
+                    if (!plateRegistry && !frameNumber) {
+                        reportError('API trả về thành công nhưng không có dữ liệu biển số/số khung');
+                        return;
+                    }
 
-                // Chuẩn hoá về đúng dạng API cần (giống request thật:
-                // .../api/360/registration-info?plate=73A19623T): chỉ chữ + số, viết hoa,
-                // bỏ hết dấu gạch ngang, dấu chấm, khoảng trắng.
-                var plateForApi = rawPlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-                proceedWithUrl('/api/360/registration-info?plate=' + encodeURIComponent(plateForApi));
+                    reportSuccess(plateRegistry, frameNumber);
+                } catch (networkErr) {
+                    reportError('Lỗi mạng hoặc lỗi khi gọi API: ' + (networkErr && networkErr.message ? networkErr.message : String(networkErr)));
+                }
             })();
         """.trimIndent()
 
@@ -391,41 +364,38 @@ class WebViewActivity : AppCompatActivity() {
             }
         }
 
-        /** Cầu nối JS -> Android khi gọi fetch() API tra cứu thất bại (lỗi mạng, HTTP lỗi, thiếu trường...). */
-        @JavascriptInterface
-        fun onRegistryDataError(message: String) {
-            runOnUiThread {
-                Toast.makeText(this@WebViewActivity, message, Toast.LENGTH_LONG).show()
-            }
-        }
-
         /**
-         * [Hướng B - gọi thẳng API] Nhận đúng 2 trường JSON (plate_registry, frame_number)
-         * lấy được từ fetch() gọi /api/360/registration-info trên trang VOS, lấy 6 số cuối
-         * của số khung, rồi điều hướng WebView thẳng sang trang đăng kiểm (không nhúng
-         * iframe) để tự điền 2 ô đầu tiên bên đó.
+         * Nhận kết quả gọi API thật của VETC (/api/360/registration-info): biển số
+         * (plate_registry) và số khung đầy đủ (frame_number) - lấy 6 ký tự cuối của
+         * số khung, rồi điều hướng WebView thẳng sang trang đăng kiểm (không nhúng
+         * iframe) để tự điền vào 2 ô id="Biendangky" và id="SoKhung".
+         *
+         * Nếu có lỗi (không tìm thấy ô biển số, HTTP 403, mất mạng...), tham số [error]
+         * sẽ chứa thông báo cụ thể - hiện luôn ra Toast cho người dùng, không im lặng.
          */
         @JavascriptInterface
-        fun onRegistryDataExtracted(plate: String, chassisRaw: String) {
+        fun onRegistryDataExtracted(plate: String, frameNumberRaw: String, error: String) {
             runOnUiThread {
-                val chassisDigitsOnly = chassisRaw.filter { it.isLetterOrDigit() }
-                val chassisLast6 = if (chassisDigitsOnly.length >= 6) {
-                    chassisDigitsOnly.takeLast(6)
-                } else {
-                    chassisDigitsOnly
+                if (error.isNotBlank()) {
+                    Toast.makeText(this@WebViewActivity, error, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
                 }
 
-                if (plate.isBlank() || chassisLast6.isBlank()) {
+                val plateClean = plate.uppercase().filter { it.isLetterOrDigit() }
+                val frameClean = frameNumberRaw.uppercase().filter { it.isLetterOrDigit() }
+                val frameLast6 = if (frameClean.length >= 6) frameClean.takeLast(6) else frameClean
+
+                if (plateClean.isBlank() || frameLast6.isBlank()) {
                     Toast.makeText(
                         this@WebViewActivity,
-                        "API tra cứu không trả về đủ biển số/số khung cho xe này.",
+                        "API trả về thiếu dữ liệu biển số hoặc số khung.",
                         Toast.LENGTH_LONG
                     ).show()
                     return@runOnUiThread
                 }
 
-                pendingRegistryPlate = plate
-                pendingRegistryChassis = chassisLast6
+                pendingRegistryPlate = plateClean
+                pendingRegistryChassis = frameLast6
                 binding.webView.loadUrl(VR_REGISTER_URL)
             }
         }
