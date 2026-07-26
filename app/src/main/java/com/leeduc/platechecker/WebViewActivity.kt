@@ -2,9 +2,6 @@ package com.leeduc.platechecker
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.webkit.CookieManager
@@ -34,6 +31,8 @@ class WebViewActivity : AppCompatActivity() {
     private lateinit var binding: ActivityWebviewBinding
     private var pendingPlateCode: String = ""
     private var targetUrl: String = TARGET_URL
+    private var pendingRegistryPlate: String = ""
+    private var pendingRegistryChassis: String = ""
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,6 +77,12 @@ class WebViewActivity : AppCompatActivity() {
                 if (url?.contains("vos.vetc.com.vn") == true) {
                     runAutoFillScript(webView, pendingPlateCode, savedUser ?: "", savedPass ?: "")
                 }
+
+                if (url?.contains("gcndangkiem.vr.org.vn") == true && pendingRegistryPlate.isNotBlank()) {
+                    runFillRegistryFieldsScript(webView, pendingRegistryPlate, pendingRegistryChassis)
+                    pendingRegistryPlate = ""
+                    pendingRegistryChassis = ""
+                }
             }
         }
 
@@ -115,18 +120,156 @@ class WebViewActivity : AppCompatActivity() {
     }
 
     private fun openRegistrySite() {
-        pendingPlateCode = ""
-        Toast.makeText(this, "Đang mở trang đăng kiểm...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Đang gọi API lấy biển số + số khung...", Toast.LENGTH_SHORT).show()
+        extractRegistryDataThenNavigate(binding.webView)
+    }
 
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(VR_REGISTER_URL)).apply {
-            addCategory(Intent.CATEGORY_BROWSABLE)
-        }
-        try {
-            startActivity(intent)
-        } catch (e: ActivityNotFoundException) {
-            binding.webView.stopLoading()
-            binding.webView.loadUrl(VR_REGISTER_URL)
-        }
+    /**
+     * [Hướng B - gọi thẳng API] Thay vì "đoán" biển số/số khung từ cấu trúc HTML hiển thị,
+     * hàm này chạy `fetch()` ngay trong WebView để gọi thẳng API nội bộ của VOS:
+     *   GET /api/360/registration-info?plate=<biển số>
+     * Vì fetch chạy cùng origin (vos.vetc.com.vn) và cùng tiến trình với trang đang mở,
+     * nó tự động dùng chung cookie/phiên đăng nhập hiện có (thêm `credentials: 'include'`
+     * để chắc chắn cookie luôn được gửi kèm) - không cần đăng nhập lại, không cần API key riêng.
+     *
+     * Kết quả trả về là JSON thật của hệ thống, lấy đúng 2 trường:
+     *   - plate_registry: biển số đăng ký (vd "73A-196.23T")
+     *   - frame_number:   số khung đầy đủ (vd "RNYBB41A6LC209211")
+     * nên không còn phụ thuộc vào cách trang hiển thị (label, DOM, panel ẩn/hiện...).
+     */
+    private fun extractRegistryDataThenNavigate(webView: WebView) {
+        val js = """
+            (function() {
+                function norm(s) { return (s || '').toLowerCase(); }
+
+                function reportError(message) {
+                    if (window.AndroidCredentialBridge) {
+                        window.AndroidCredentialBridge.onRegistryDataError(message);
+                    }
+                }
+
+                // DOM chỉ còn dùng để LẤY GIÁ TRỊ Ô TÌM KIẾM (biển số vừa tra cứu);
+                // "số khung" không còn đoán qua DOM nữa - lấy thẳng từ JSON của API.
+                function getPlateInputValue() {
+                    var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
+                    for (var i = 0; i < inputs.length; i++) {
+                        var el = inputs[i];
+                        var hint = norm(el.name) + ' ' + norm(el.id) + ' ' + norm(el.placeholder);
+                        if ((hint.indexOf('bien') !== -1 || hint.indexOf('etag') !== -1) && el.value) {
+                            return el.value;
+                        }
+                    }
+                    return '';
+                }
+
+                var rawPlate = getPlateInputValue();
+                if (!rawPlate) {
+                    reportError('Không tìm thấy ô biển số trên trang để lấy giá trị tra cứu.');
+                    return;
+                }
+
+                // Chuẩn hoá về đúng dạng API cần (giống request thật:
+                // .../api/360/registration-info?plate=73A19623T): chỉ chữ + số, viết hoa,
+                // bỏ hết dấu gạch ngang, dấu chấm, khoảng trắng.
+                var plateForApi = rawPlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+                fetch('/api/360/registration-info?plate=' + encodeURIComponent(plateForApi), {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: { 'Accept': 'application/json' }
+                })
+                .then(function(res) {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return res.json();
+                })
+                .then(function(data) {
+                    var plateRegistry = (data && data.plate_registry) ? String(data.plate_registry) : '';
+                    var frameNumber = (data && data.frame_number) ? String(data.frame_number) : '';
+
+                    if (!plateRegistry || !frameNumber) {
+                        reportError('API trả về thiếu biển số hoặc số khung cho biển "' + plateForApi + '".');
+                        return;
+                    }
+
+                    if (window.AndroidCredentialBridge) {
+                        window.AndroidCredentialBridge.onRegistryDataExtracted(plateRegistry, frameNumber);
+                    }
+                })
+                .catch(function(err) {
+                    reportError('Gọi API tra cứu thất bại: ' + (err && err.message ? err.message : err));
+                });
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js, null)
+    }
+
+    /** Điền biển số + 6 số cuối số khung vào 2 ô nhập liệu đầu tiên của trang đăng kiểm. */
+    private fun runFillRegistryFieldsScript(webView: WebView, plate: String, chassisLast6: String) {
+        val safePlate = escapeJs(plate)
+        val safeChassis = escapeJs(chassisLast6)
+
+        val js = """
+            (function() {
+                var PLATE_VALUE = '$safePlate';
+                var CHASSIS_VALUE = '$safeChassis';
+                var attempts = 0;
+                var maxAttempts = 20;
+
+                function isVisible(el) {
+                    if (!el) return false;
+                    var style = window.getComputedStyle(el);
+                    return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetParent !== null;
+                }
+
+                function setValue(el, val) {
+                    el.focus();
+                    var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+                    if (nativeSetter && nativeSetter.set) {
+                        nativeSetter.set.call(el, val);
+                    } else {
+                        el.value = val;
+                    }
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                function tick() {
+                    attempts++;
+
+                    // Dùng đúng ID thật của trang gcndangkiem.vr.org.vn
+                    var plateField = document.getElementById('Biendangky');
+                    var chassisField = document.getElementById('SoKhung');
+
+                    if (plateField && chassisField && isVisible(plateField) && isVisible(chassisField)) {
+                        setValue(plateField, PLATE_VALUE);
+                        setValue(chassisField, CHASSIS_VALUE);
+                        return;
+                    }
+
+                    // Dự phòng: nếu vì lý do gì đó không thấy đúng 2 id trên (trang đổi cấu trúc),
+                    // thử lấy tạm ô nhập liệu hiển thị đầu tiên và thứ hai.
+                    if (attempts >= maxAttempts) {
+                        var inputs = Array.prototype.slice.call(document.querySelectorAll('input, textarea'));
+                        var visible = inputs.filter(function(el) {
+                            var typeOk = !el.type || ['text', 'search', 'tel', 'number', ''].indexOf(el.type) !== -1;
+                            return typeOk && isVisible(el);
+                        });
+                        if (visible.length >= 2) {
+                            setValue(visible[0], PLATE_VALUE);
+                            setValue(visible[1], CHASSIS_VALUE);
+                        }
+                        return;
+                    }
+
+                    setTimeout(tick, 500);
+                }
+
+                tick();
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js, null)
     }
 
     /** Dựng bảng giá theo loại xe từ PriceData, hiển thị trong lớp phủ mờ khi bấm nút "Giá". */
@@ -201,6 +344,45 @@ class WebViewActivity : AppCompatActivity() {
                     }
                     .setNegativeButton("Không, cảm ơn", null)
                     .show()
+            }
+        }
+
+        /** Cầu nối JS -> Android khi gọi fetch() API tra cứu thất bại (lỗi mạng, HTTP lỗi, thiếu trường...). */
+        @JavascriptInterface
+        fun onRegistryDataError(message: String) {
+            runOnUiThread {
+                Toast.makeText(this@WebViewActivity, message, Toast.LENGTH_LONG).show()
+            }
+        }
+
+        /**
+         * [Hướng B - gọi thẳng API] Nhận đúng 2 trường JSON (plate_registry, frame_number)
+         * lấy được từ fetch() gọi /api/360/registration-info trên trang VOS, lấy 6 số cuối
+         * của số khung, rồi điều hướng WebView thẳng sang trang đăng kiểm (không nhúng
+         * iframe) để tự điền 2 ô đầu tiên bên đó.
+         */
+        @JavascriptInterface
+        fun onRegistryDataExtracted(plate: String, chassisRaw: String) {
+            runOnUiThread {
+                val chassisDigitsOnly = chassisRaw.filter { it.isLetterOrDigit() }
+                val chassisLast6 = if (chassisDigitsOnly.length >= 6) {
+                    chassisDigitsOnly.takeLast(6)
+                } else {
+                    chassisDigitsOnly
+                }
+
+                if (plate.isBlank() || chassisLast6.isBlank()) {
+                    Toast.makeText(
+                        this@WebViewActivity,
+                        "API tra cứu không trả về đủ biển số/số khung cho xe này.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@runOnUiThread
+                }
+
+                pendingRegistryPlate = plate
+                pendingRegistryChassis = chassisLast6
+                binding.webView.loadUrl(VR_REGISTER_URL)
             }
         }
     }
