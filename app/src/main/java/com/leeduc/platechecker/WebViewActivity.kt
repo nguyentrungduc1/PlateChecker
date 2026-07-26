@@ -148,23 +148,92 @@ class WebViewActivity : AppCompatActivity() {
                     }
                 }
 
-                // DOM chỉ còn dùng để LẤY GIÁ TRỊ Ô TÌM KIẾM (biển số vừa tra cứu);
-                // "số khung" không còn đoán qua DOM nữa - lấy thẳng từ JSON của API.
-                function getPlateInputValue() {
-                    var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
+                function proceedWithUrl(apiUrl) {
+                    fetch(apiUrl, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: { 'Accept': 'application/json' }
+                    })
+                    .then(function(res) {
+                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                        return res.json();
+                    })
+                    .then(function(data) {
+                        var plateRegistry = (data && data.plate_registry) ? String(data.plate_registry) : '';
+                        var frameNumber = (data && data.frame_number) ? String(data.frame_number) : '';
+
+                        if (!plateRegistry || !frameNumber) {
+                            reportError('API trả về thiếu biển số hoặc số khung.');
+                            return;
+                        }
+
+                        if (window.AndroidCredentialBridge) {
+                            window.AndroidCredentialBridge.onRegistryDataExtracted(plateRegistry, frameNumber);
+                        }
+                    })
+                    .catch(function(err) {
+                        reportError('Gọi API tra cứu thất bại: ' + (err && err.message ? err.message : err));
+                    });
+                }
+
+                // Cách 1 (đáng tin nhất): trang VOS tự gọi /api/360/registration-info khi
+                // người dùng bấm tra cứu - lấy đúng URL request đó từ Resource Timing của
+                // trình duyệt (không đoán tên field, không đoán định dạng biển số).
+                function findLastRegistrationInfoUrl() {
+                    try {
+                        var entries = performance.getEntriesByType('resource') || [];
+                        var matches = entries.filter(function(e) {
+                            return e.name.indexOf('/api/360/registration-info') !== -1;
+                        });
+                        if (matches.length === 0) return null;
+                        matches.sort(function(a, b) { return b.startTime - a.startTime; });
+                        return matches[0].name;
+                    } catch (e) {
+                        return null;
+                    }
+                }
+
+                // Cách 2 (dự phòng): quét input hiển thị có giá trị (không chỉ giới hạn tên
+                // field chứa "bien"/"etag" - vì trang có thể dùng tên khác), hoặc lấy từ URL.
+                function guessPlateFromInputs() {
+                    var inputs = Array.prototype.slice.call(document.querySelectorAll('input, textarea'));
+                    var keywords = ['bien', 'etag', 'plate', 'keyword', 'search', 'key', 'query', 'q'];
                     for (var i = 0; i < inputs.length; i++) {
                         var el = inputs[i];
+                        if (!el.value) continue;
                         var hint = norm(el.name) + ' ' + norm(el.id) + ' ' + norm(el.placeholder);
-                        if ((hint.indexOf('bien') !== -1 || hint.indexOf('etag') !== -1) && el.value) {
-                            return el.value;
+                        for (var k = 0; k < keywords.length; k++) {
+                            if (hint.indexOf(keywords[k]) !== -1) return el.value;
                         }
+                    }
+                    for (var j = 0; j < inputs.length; j++) {
+                        var el2 = inputs[j];
+                        if (el2.value && el2.offsetParent !== null) return el2.value;
                     }
                     return '';
                 }
 
-                var rawPlate = getPlateInputValue();
+                function guessPlateFromUrl() {
+                    try {
+                        var url = new URL(window.location.href);
+                        var candidates = ['plate', 'bienso', 'keyword', 'key', 'search', 'q'];
+                        for (var i = 0; i < candidates.length; i++) {
+                            var v = url.searchParams.get(candidates[i]);
+                            if (v) return v;
+                        }
+                    } catch (e) {}
+                    return '';
+                }
+
+                var lastUrl = findLastRegistrationInfoUrl();
+                if (lastUrl) {
+                    proceedWithUrl(lastUrl);
+                    return;
+                }
+
+                var rawPlate = guessPlateFromInputs() || guessPlateFromUrl();
                 if (!rawPlate) {
-                    reportError('Không tìm thấy ô biển số trên trang để lấy giá trị tra cứu.');
+                    reportError('Chưa thấy dữ liệu tra cứu nào trên trang. Bạn tra cứu 1 biển số trên VOS xong rồi bấm lại nút này.');
                     return;
                 }
 
@@ -172,32 +241,7 @@ class WebViewActivity : AppCompatActivity() {
                 // .../api/360/registration-info?plate=73A19623T): chỉ chữ + số, viết hoa,
                 // bỏ hết dấu gạch ngang, dấu chấm, khoảng trắng.
                 var plateForApi = rawPlate.toUpperCase().replace(/[^A-Z0-9]/g, '');
-
-                fetch('/api/360/registration-info?plate=' + encodeURIComponent(plateForApi), {
-                    method: 'GET',
-                    credentials: 'include',
-                    headers: { 'Accept': 'application/json' }
-                })
-                .then(function(res) {
-                    if (!res.ok) throw new Error('HTTP ' + res.status);
-                    return res.json();
-                })
-                .then(function(data) {
-                    var plateRegistry = (data && data.plate_registry) ? String(data.plate_registry) : '';
-                    var frameNumber = (data && data.frame_number) ? String(data.frame_number) : '';
-
-                    if (!plateRegistry || !frameNumber) {
-                        reportError('API trả về thiếu biển số hoặc số khung cho biển "' + plateForApi + '".');
-                        return;
-                    }
-
-                    if (window.AndroidCredentialBridge) {
-                        window.AndroidCredentialBridge.onRegistryDataExtracted(plateRegistry, frameNumber);
-                    }
-                })
-                .catch(function(err) {
-                    reportError('Gọi API tra cứu thất bại: ' + (err && err.message ? err.message : err));
-                });
+                proceedWithUrl('/api/360/registration-info?plate=' + encodeURIComponent(plateForApi));
             })();
         """.trimIndent()
 
