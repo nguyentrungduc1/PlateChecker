@@ -28,16 +28,20 @@
         android:id="@+id/btnFlashToggle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_margin="8dp"
+        android:layout_margin="12dp"
         android:minWidth="0dp"
         android:minHeight="0dp"
-        android:padding="10dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
         android:text="⚡ Flash: Bật"
-        android:textSize="14sp"
-        android:background="#88000000"
+        android:textSize="13sp"
+        android:background="@drawable/bg_floating_button"
         android:textColor="#FFFFFF"
-        app:layout_constraintTop_toTopOf="@id/previewView"
-        app:layout_constraintEnd_toEndOf="@id/previewView" />
+        android:elevation="4dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <ImageView
         android:id="@+id/imgPreview"
