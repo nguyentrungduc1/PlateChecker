@@ -280,7 +280,10 @@ class MainActivity : AppCompatActivity() {
         if (rotationDegrees == 0) return original
 
         val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-        return Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, true)
+        // filter=false: xoay đúng 90/180/270 độ không cần nội suy (mỗi pixel khớp
+        // chính xác 1-1 sang vị trí mới), dùng nearest-neighbor cho kết quả sắc nét
+        // tuyệt đối, tránh làm mờ nhẹ không cần thiết như khi filter=true.
+        return Bitmap.createBitmap(original, 0, 0, original.width, original.height, matrix, false)
     }
 
     /**
