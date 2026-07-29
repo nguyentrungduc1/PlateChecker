@@ -84,6 +84,59 @@ class WebViewActivity : AppCompatActivity() {
                     pendingRegistryChassis = ""
                 }
             }
+
+            // Trước đây không override 2 hàm dưới -> WebView âm thầm huỷ tải trang khi gặp
+            // lỗi SSL/kết nối, không báo gì cho người dùng. Giờ log + Toast rõ nguyên nhân thật.
+            override fun onReceivedSslError(
+                view: WebView?,
+                handler: android.webkit.SslErrorHandler?,
+                error: android.net.http.SslError?
+            ) {
+                android.util.Log.e("PlateChecker", "onReceivedSslError: ${error?.toString()} url=${error?.url}")
+                Toast.makeText(
+                    this@WebViewActivity,
+                    "Lỗi chứng chỉ SSL khi tải trang (mã lỗi: ${error?.primaryError}). Trang không được tải vì lý do bảo mật.",
+                    Toast.LENGTH_LONG
+                ).show()
+                // Không tự ý bỏ qua lỗi SSL (handler.proceed()) vì rủi ro bảo mật - huỷ tải như mặc định.
+                handler?.cancel()
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?,
+                error: android.webkit.WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame == true) {
+                    val desc = error?.description ?: "không rõ nguyên nhân"
+                    android.util.Log.e("PlateChecker", "onReceivedError: $desc url=${request.url}")
+                    Toast.makeText(
+                        this@WebViewActivity,
+                        "Không tải được trang: $desc",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?,
+                errorResponse: android.webkit.WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                if (request?.isForMainFrame == true) {
+                    android.util.Log.e(
+                        "PlateChecker",
+                        "onReceivedHttpError: HTTP ${errorResponse?.statusCode} url=${request.url}"
+                    )
+                    Toast.makeText(
+                        this@WebViewActivity,
+                        "Trang trả về lỗi HTTP ${errorResponse?.statusCode}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
 
         webView.loadUrl(targetUrl)
