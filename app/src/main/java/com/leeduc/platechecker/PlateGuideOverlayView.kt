@@ -24,7 +24,8 @@ class PlateGuideOverlayView @JvmOverloads constructor(
         // Khung chiếm 78% chiều rộng, tỉ lệ biển số ô tô ~4.7:1, căn giữa màn hình
         const val WIDTH_FRACTION = 0.78f
         const val ASPECT_RATIO = 4.7f // width / height
-        const val CENTER_Y_FRACTION = 0.5f
+        // Kéo tâm khung ngắm xuống thêm 1/6 chiều cao màn hình so với chính giữa (0.5 + 1/6)
+        const val CENTER_Y_FRACTION = 0.5f + 1f / 6f
     }
 
     private val dimPaint = Paint().apply {
