@@ -47,10 +47,6 @@ class MainActivity : AppCompatActivity() {
     // nên không thể dùng chung isShowingCapturedPhoto để phân biệt).
     private var pendingResetAfterWebView = false
     private var flashEnabled = true
-    private var camera: androidx.camera.core.Camera? = null
-    private var torchCameraId: String? = null
-    private var torchSupportsStrength = false
-    private var torchTargetStrengthLevel = 1
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -109,9 +105,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnFlashToggle.setOnClickListener {
             flashEnabled = !flashEnabled
-            applyFlashSetting()
-            val modeLabel = if (flashEnabled && torchSupportsStrength) "Bật (50%)" else if (flashEnabled) "Bật" else "Tắt"
-            binding.btnFlashToggle.text = "⚡ Flash: $modeLabel"
+            imageCapture?.flashMode = if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+            binding.btnFlashToggle.text = if (flashEnabled) "⚡ Flash: Bật" else "⚡ Flash: Tắt"
         }
     }
 
@@ -141,25 +136,19 @@ class MainActivity : AppCompatActivity() {
                     it.setSurfaceProvider(binding.previewView.surfaceProvider)
                 }
 
-            // Ảnh chất lượng cao. Chế độ flash mặc định để OFF ở đây - sẽ tự quyết định
-            // dùng đèn pin 50% (nếu máy hỗ trợ) hay đèn flash chụp ảnh bình thường
-            // (nếu máy không hỗ trợ chỉnh mức) ngay sau khi camera bind xong.
+            // Ảnh chất lượng cao + đèn flash bật/tắt theo lựa chọn của người dùng
             imageCapture = ImageCapture.Builder()
                 .setTargetAspectRatio(AspectRatio.RATIO_4_3)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setJpegQuality(92)
-                .setFlashMode(ImageCapture.FLASH_MODE_OFF)
+                .setFlashMode(if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF)
                 .build()
 
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             try {
                 cameraProvider.unbindAll()
-                camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture)
-                checkTorchStrengthSupport()
-                applyFlashSetting()
-                val modeLabel = if (flashEnabled && torchSupportsStrength) "Bật (50%)" else if (flashEnabled) "Bật" else "Tắt"
-                binding.btnFlashToggle.text = "⚡ Flash: $modeLabel"
+                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture)
             } catch (e: Exception) {
                 Log.e(TAG, "Lỗi bind camera", e)
             }
@@ -167,93 +156,7 @@ class MainActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
-    /**
-     * Kiểm tra xem máy có hỗ trợ chỉnh MỨC ĐỘ đèn pin (torch strength) hay không -
-     * đây là API chỉ có từ Android 13 (API 33) trở lên, và không phải máy nào cũng
-     * hỗ trợ nhiều mức (nhiều máy chỉ có đúng 1 mức = full). Android không có API
-     * chuẩn nào để chỉnh cường độ ĐÈN FLASH CHỤP ẢNH xuống theo %, nên ở đây dùng
-     * đèn pin (torch) làm nguồn sáng thay thế khi máy hỗ trợ nhiều mức.
-     */
-    private fun checkTorchStrengthSupport() {
-        torchSupportsStrength = false
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return // < Android 13
-
-        try {
-            val cameraInfo = camera?.cameraInfo ?: return
-            val camera2Info = androidx.camera.camera2.interop.Camera2CameraInfo.from(cameraInfo)
-            val cameraId = camera2Info.cameraId
-            val manager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            val characteristics = manager.getCameraCharacteristics(cameraId)
-            val maxLevel = characteristics.get(
-                android.hardware.camera2.CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL
-            ) ?: 1
-
-            torchCameraId = cameraId
-            if (maxLevel > 1) {
-                torchSupportsStrength = true
-                // Lấy khoảng 50% mức tối đa, không dưới mức 1
-                torchTargetStrengthLevel = (maxLevel * 0.5f).toInt().coerceAtLeast(1)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Máy không hỗ trợ kiểm tra mức đèn pin, dùng flash mặc định", e)
-            torchSupportsStrength = false
-        }
-    }
-
-    /** Áp dụng lựa chọn bật/tắt flash hiện tại, ưu tiên đèn pin 50% nếu máy hỗ trợ. */
-    private fun applyFlashSetting() {
-        if (!flashEnabled) {
-            imageCapture?.flashMode = ImageCapture.FLASH_MODE_OFF
-            turnOffTorch()
-            return
-        }
-
-        if (torchSupportsStrength) {
-            // Dùng đèn pin ở mức ~50% làm nguồn sáng, tắt hẳn flash chụp ảnh mặc định
-            // của ImageCapture để tránh chớp thêm 1 lần flash full cường độ đè lên.
-            imageCapture?.flashMode = ImageCapture.FLASH_MODE_OFF
-        } else {
-            // Máy không hỗ trợ chỉnh mức -> quay lại flash chụp ảnh bình thường (full)
-            imageCapture?.flashMode = ImageCapture.FLASH_MODE_ON
-        }
-    }
-
-    private fun turnOnTorchAtTargetStrength() {
-        if (!flashEnabled || !torchSupportsStrength) return
-        val cameraId = torchCameraId ?: return
-        try {
-            val manager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            manager.turnOnTorchWithStrengthLevel(cameraId, torchTargetStrengthLevel)
-        } catch (e: Exception) {
-            Log.e(TAG, "Không bật được đèn pin theo mức", e)
-        }
-    }
-
-    private fun turnOffTorch() {
-        val cameraId = torchCameraId ?: return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        try {
-            val manager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            manager.setTorchMode(cameraId, false)
-        } catch (e: Exception) {
-            Log.e(TAG, "Không tắt được đèn pin", e)
-        }
-    }
-
     private fun takePhoto() {
-        if (torchSupportsStrength && flashEnabled) {
-            // Bật đèn pin ở mức ~50% trước, đợi 200ms để ổn định sáng rồi mới chụp thật -
-            // tương tự cách flash chụp ảnh thông thường vẫn có bước "đo sáng" trước khi chớp.
-            turnOnTorchAtTargetStrength()
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                capturePhotoNow()
-            }, 200)
-        } else {
-            capturePhotoNow()
-        }
-    }
-
-    private fun capturePhotoNow() {
         val imageCapture = imageCapture ?: return
 
         val name = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
@@ -287,13 +190,11 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onError(exc: ImageCaptureException) {
-                    turnOffTorch()
                     Log.e(TAG, "Chụp ảnh thất bại", exc)
                     Toast.makeText(baseContext, "Chụp ảnh thất bại: ${exc.message}", Toast.LENGTH_SHORT).show()
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    turnOffTorch()
                     val uri = output.savedUri ?: run {
                         Toast.makeText(baseContext, "Lỗi: không lấy được đường dẫn ảnh", Toast.LENGTH_SHORT).show()
                         return

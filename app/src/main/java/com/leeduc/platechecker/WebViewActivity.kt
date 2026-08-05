@@ -68,6 +68,8 @@ class WebViewActivity : AppCompatActivity() {
 
         // Cầu nối để trang web báo về Android khi người dùng tự tay bấm nút đăng nhập
         webView.addJavascriptInterface(CredentialBridge(), "AndroidCredentialBridge")
+        // Cầu nối riêng để nhận kết quả gọi API tra đăng kiểm (biển số + số khung)
+        webView.addJavascriptInterface(RegistryBridge(), "AndroidRegistryBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -79,59 +81,6 @@ class WebViewActivity : AppCompatActivity() {
 
                 if (url?.contains("vos.vetc.com.vn") == true) {
                     runAutoFillScript(webView, pendingPlateCode, savedUser ?: "", savedPass ?: "")
-                }
-            }
-
-            // Trước đây không override 2 hàm dưới -> WebView âm thầm huỷ tải trang khi gặp
-            // lỗi SSL/kết nối, không báo gì cho người dùng. Giờ log + Toast rõ nguyên nhân thật.
-            override fun onReceivedSslError(
-                view: WebView?,
-                handler: android.webkit.SslErrorHandler?,
-                error: android.net.http.SslError?
-            ) {
-                android.util.Log.e("PlateChecker", "onReceivedSslError: ${error?.toString()} url=${error?.url}")
-                Toast.makeText(
-                    this@WebViewActivity,
-                    "Lỗi chứng chỉ SSL khi tải trang (mã lỗi: ${error?.primaryError}). Trang không được tải vì lý do bảo mật.",
-                    Toast.LENGTH_LONG
-                ).show()
-                // Không tự ý bỏ qua lỗi SSL (handler.proceed()) vì rủi ro bảo mật - huỷ tải như mặc định.
-                handler?.cancel()
-            }
-
-            override fun onReceivedError(
-                view: WebView?,
-                request: android.webkit.WebResourceRequest?,
-                error: android.webkit.WebResourceError?
-            ) {
-                super.onReceivedError(view, request, error)
-                if (request?.isForMainFrame == true) {
-                    val desc = error?.description ?: "không rõ nguyên nhân"
-                    android.util.Log.e("PlateChecker", "onReceivedError: $desc url=${request.url}")
-                    Toast.makeText(
-                        this@WebViewActivity,
-                        "Không tải được trang: $desc",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-
-            override fun onReceivedHttpError(
-                view: WebView?,
-                request: android.webkit.WebResourceRequest?,
-                errorResponse: android.webkit.WebResourceResponse?
-            ) {
-                super.onReceivedHttpError(view, request, errorResponse)
-                if (request?.isForMainFrame == true) {
-                    android.util.Log.e(
-                        "PlateChecker",
-                        "onReceivedHttpError: HTTP ${errorResponse?.statusCode} url=${request.url}"
-                    )
-                    Toast.makeText(
-                        this@WebViewActivity,
-                        "Trang trả về lỗi HTTP ${errorResponse?.statusCode}",
-                        Toast.LENGTH_LONG
-                    ).show()
                 }
             }
         }
@@ -173,12 +122,12 @@ class WebViewActivity : AppCompatActivity() {
      * Đọc biển số ĐANG HIỂN THỊ trong ô tìm kiếm trên trang VOS (không dùng lại chuỗi
      * OCR trong app, vì OCR có thể sai và bạn có thể đã tự sửa tay), gọi thẳng API
      * thật của VETC (/api/360/registration-info) bằng fetch() ngay trong WebView
-     * (tận dụng đúng cookie phiên đăng nhập hiện có) để lấy plate_registry + số khung.
+     * (tận dụng đúng cookie phiên đăng nhập hiện có) để lấy biển số + số khung.
      *
-     * Sau đó KHÔNG điều hướng WebView sang trang đăng kiểm nữa (trang đó có Cloudflare
-     * chặn WebView, xác nhận qua thực tế test - mã lỗi SSL 3), mà: tự copy biển số vào
-     * clipboard, hiện hộp thoại cho phép copy số khung, và mở Chrome thật (vượt qua
-     * được Cloudflare) tới đúng trang đăng kiểm.
+     * Trang đăng kiểm bị Cloudflare chặn khi mở trong WebView (đã xác nhận qua thực
+     * tế test: lỗi SSL mã 3, nhưng Chrome thật mở bình thường) - nên không điền vào
+     * WebView, mà: tự copy LẦN LƯỢT 6 số cuối số khung rồi đến biển số vào clipboard,
+     * sau đó mới mở Chrome thật tới trang đăng kiểm.
      */
     private fun openRegistrySite() {
         Toast.makeText(this, "Đang lấy biển số + số khung từ trang VOS...", Toast.LENGTH_SHORT).show()
@@ -186,13 +135,13 @@ class WebViewActivity : AppCompatActivity() {
         val js = """
             (async function() {
                 function reportError(message) {
-                    if (window.AndroidCredentialBridge) {
-                        window.AndroidCredentialBridge.onRegistryDataExtracted('', '', message);
+                    if (window.AndroidRegistryBridge) {
+                        window.AndroidRegistryBridge.onRegistryDataExtracted('', '', message);
                     }
                 }
                 function reportSuccess(plateRegistry, frameNumber) {
-                    if (window.AndroidCredentialBridge) {
-                        window.AndroidCredentialBridge.onRegistryDataExtracted(plateRegistry || '', frameNumber || '', '');
+                    if (window.AndroidRegistryBridge) {
+                        window.AndroidRegistryBridge.onRegistryDataExtracted(plateRegistry || '', frameNumber || '', '');
                     }
                 }
                 function isVisible(el) {
@@ -267,25 +216,77 @@ class WebViewActivity : AppCompatActivity() {
         binding.webView.evaluateJavascript(js, null)
     }
 
-    /** Mở Chrome thật (vượt qua được Cloudflare) tới trang đăng kiểm; nếu máy không có Chrome, dùng trình duyệt mặc định. */
+    private fun copyToClipboard(label: String, text: String) {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    }
+
+    /** Mở Chrome thật (vượt qua được Cloudflare); nếu máy không có Chrome, dùng trình duyệt mặc định. */
     private fun openInChromeOrDefaultBrowser(url: String) {
         val chromeIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
             setPackage("com.android.chrome")
+            addCategory(Intent.CATEGORY_BROWSABLE)
         }
         try {
             startActivity(chromeIntent)
         } catch (e: ActivityNotFoundException) {
             try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                })
             } catch (e2: ActivityNotFoundException) {
                 Toast.makeText(this, "Không tìm thấy trình duyệt nào trên máy để mở trang.", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    private fun copyToClipboard(label: String, text: String) {
-        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    /** Cầu nối JS -> Android, nhận kết quả gọi API tra đăng kiểm. */
+    private inner class RegistryBridge {
+        /**
+         * Nhận biển số (plate_registry) + số khung đầy đủ (frame_number) từ API thật
+         * của VETC, lấy 6 ký tự cuối số khung, rồi COPY LẦN LƯỢT vào clipboard:
+         * 6 số cuối số khung TRƯỚC, biển số xe SAU - đúng thứ tự bạn yêu cầu - có
+         * Toast báo mỗi lần copy, sau đó mới tự mở Chrome tới trang đăng kiểm.
+         */
+        @JavascriptInterface
+        fun onRegistryDataExtracted(plate: String, frameNumberRaw: String, error: String) {
+            runOnUiThread {
+                if (error.isNotBlank()) {
+                    Toast.makeText(this@WebViewActivity, error, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+
+                val plateClean = plate.uppercase().filter { it.isLetterOrDigit() }
+                val frameClean = frameNumberRaw.uppercase().filter { it.isLetterOrDigit() }
+                val frameLast6 = if (frameClean.length >= 6) frameClean.takeLast(6) else frameClean
+
+                if (plateClean.isBlank() || frameLast6.isBlank()) {
+                    Toast.makeText(
+                        this@WebViewActivity,
+                        "API trả về thiếu dữ liệu biển số hoặc số khung.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@runOnUiThread
+                }
+
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+                // Bước 1: copy 6 số cuối số khung trước
+                copyToClipboard("Số khung", frameLast6)
+                Toast.makeText(this@WebViewActivity, "Đã copy số khung: $frameLast6", Toast.LENGTH_SHORT).show()
+
+                // Bước 2: sau đó copy biển số (ghi đè clipboard)
+                handler.postDelayed({
+                    copyToClipboard("Biển số", plateClean)
+                    Toast.makeText(this@WebViewActivity, "Đã copy biển số: $plateClean", Toast.LENGTH_SHORT).show()
+
+                    // Bước 3: mở Chrome sau khi đã copy xong cả 2
+                    handler.postDelayed({
+                        openInChromeOrDefaultBrowser(VR_REGISTER_URL)
+                    }, 900)
+                }, 900)
+            }
+        }
     }
 
     /** Dựng bảng giá theo loại xe từ PriceData, hiển thị trong lớp phủ mờ khi bấm nút "Giá". */
@@ -359,66 +360,6 @@ class WebViewActivity : AppCompatActivity() {
                         Toast.makeText(this@WebViewActivity, "Đã lưu mật khẩu trên máy", Toast.LENGTH_SHORT).show()
                     }
                     .setNegativeButton("Không, cảm ơn", null)
-                    .show()
-            }
-        }
-
-        /**
-         * Nhận kết quả gọi API thật của VETC (/api/360/registration-info): biển số
-         * (plate_registry) và số khung đầy đủ (frame_number) - lấy 6 ký tự cuối của
-         * số khung. Trang đăng kiểm bị Cloudflare chặn khi mở trong WebView (đã xác
-         * nhận qua thực tế: lỗi SSL mã 3, nhưng Chrome thật mở bình thường) - nên
-         * KHÔNG điều hướng WebView nữa, mà: copy biển số vào clipboard ngay, hiện
-         * hộp thoại cho copy số khung, và mở Chrome thật tới trang đăng kiểm.
-         *
-         * Nếu có lỗi (không tìm thấy ô biển số, HTTP 403, mất mạng...), tham số [error]
-         * sẽ chứa thông báo cụ thể - hiện luôn ra Toast cho người dùng, không im lặng.
-         */
-        @JavascriptInterface
-        fun onRegistryDataExtracted(plate: String, frameNumberRaw: String, error: String) {
-            runOnUiThread {
-                if (error.isNotBlank()) {
-                    Toast.makeText(this@WebViewActivity, error, Toast.LENGTH_LONG).show()
-                    return@runOnUiThread
-                }
-
-                val plateClean = plate.uppercase().filter { it.isLetterOrDigit() }
-                val frameClean = frameNumberRaw.uppercase().filter { it.isLetterOrDigit() }
-                val frameLast6 = if (frameClean.length >= 6) frameClean.takeLast(6) else frameClean
-
-                if (plateClean.isBlank() || frameLast6.isBlank()) {
-                    Toast.makeText(
-                        this@WebViewActivity,
-                        "API trả về thiếu dữ liệu biển số hoặc số khung.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    return@runOnUiThread
-                }
-
-                // Copy sẵn biển số vào clipboard ngay - đây là ô thường dán trước tiên
-                copyToClipboard("Biển số", plateClean)
-                Toast.makeText(
-                    this@WebViewActivity,
-                    "Đã copy biển số ($plateClean) vào bộ nhớ tạm",
-                    Toast.LENGTH_SHORT
-                ).show()
-
-                AlertDialog.Builder(this@WebViewActivity)
-                    .setTitle("Dữ liệu tra đăng kiểm")
-                    .setMessage(
-                        "Biển số: $plateClean (đã copy sẵn)\n" +
-                            "6 số cuối số khung: $frameLast6\n\n" +
-                            "Bấm \"Copy số khung\" trước khi dán vào ô số khung, " +
-                            "sau đó bấm \"Mở Chrome\" để sang trang đăng kiểm."
-                    )
-                    .setPositiveButton("Mở Chrome") { _, _ ->
-                        openInChromeOrDefaultBrowser(VR_REGISTER_URL)
-                    }
-                    .setNeutralButton("Copy số khung") { _, _ ->
-                        copyToClipboard("Số khung", frameLast6)
-                        Toast.makeText(this@WebViewActivity, "Đã copy số khung ($frameLast6)", Toast.LENGTH_SHORT).show()
-                    }
-                    .setNegativeButton("Đóng", null)
                     .show()
             }
         }
