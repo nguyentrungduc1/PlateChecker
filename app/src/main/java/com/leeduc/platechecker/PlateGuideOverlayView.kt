@@ -28,7 +28,7 @@ class PlateGuideOverlayView @JvmOverloads constructor(
     }
 
     private val dimPaint = Paint().apply {
-        color = Color.parseColor("#55000000")
+        color = Color.parseColor("#99000000")
         style = Paint.Style.FILL
     }
 
