@@ -3,6 +3,8 @@ package com.leeduc.platechecker
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -66,6 +68,8 @@ class WebViewActivity : AppCompatActivity() {
 
         // Cầu nối để trang web báo về Android khi người dùng tự tay bấm nút đăng nhập
         webView.addJavascriptInterface(CredentialBridge(), "AndroidCredentialBridge")
+        // Cầu nối riêng để nhận kết quả gọi API tra đăng kiểm (biển số + số khung)
+        webView.addJavascriptInterface(RegistryBridge(), "AndroidRegistryBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -114,18 +118,237 @@ class WebViewActivity : AppCompatActivity() {
         binding.btnManageCredentials.visibility = buttonsVisibility
     }
 
+    /**
+     * Đọc biển số ĐANG HIỂN THỊ trong ô tìm kiếm trên trang VOS (không dùng lại chuỗi
+     * OCR trong app, vì OCR có thể sai và bạn có thể đã tự sửa tay), gọi thẳng API
+     * thật của VETC (/api/360/registration-info) bằng fetch() ngay trong WebView
+     * (tận dụng đúng cookie phiên đăng nhập hiện có) để lấy biển số + số khung.
+     *
+     * Trang đăng kiểm bị Cloudflare chặn khi mở trong WebView (đã xác nhận qua thực
+     * tế test: lỗi SSL mã 3, nhưng Chrome thật mở bình thường) - nên không điền vào
+     * WebView, mà: tự copy LẦN LƯỢT 6 số cuối số khung rồi đến biển số vào clipboard,
+     * sau đó mới mở Chrome thật tới trang đăng kiểm.
+     */
     private fun openRegistrySite() {
-        pendingPlateCode = ""
-        Toast.makeText(this, "Đang mở trang đăng kiểm...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Đang lấy biển số + số khung từ trang VOS...", Toast.LENGTH_SHORT).show()
 
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(VR_REGISTER_URL)).apply {
+        val js = """
+            (async function() {
+                function reportError(message) {
+                    if (window.AndroidRegistryBridge) {
+                        window.AndroidRegistryBridge.onRegistryDataExtracted('', '', message);
+                    }
+                }
+                function reportSuccess(plateRegistry, frameNumber) {
+                    if (window.AndroidRegistryBridge) {
+                        window.AndroidRegistryBridge.onRegistryDataExtracted(plateRegistry || '', frameNumber || '', '');
+                    }
+                }
+                function isVisible(el) {
+                    if (!el) return false;
+                    var style = window.getComputedStyle(el);
+                    return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetParent !== null;
+                }
+                function getCurrentPlateInputValue() {
+                    var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
+                    var visible = inputs.filter(isVisible);
+                    for (var i = 0; i < visible.length; i++) {
+                        var el = visible[i];
+                        var hint = ((el.name || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '')).toLowerCase();
+                        if ((hint.indexOf('bien') !== -1 || hint.indexOf('etag') !== -1) && el.value) {
+                            return el.value;
+                        }
+                    }
+                    for (var j = 0; j < visible.length; j++) {
+                        var el2 = visible[j];
+                        var typeOk = !el2.type || ['text', 'search', 'tel', ''].indexOf(el2.type) !== -1;
+                        if (typeOk && el2.value) return el2.value;
+                    }
+                    return '';
+                }
+
+                // Trang VOS xác thực API bằng token trong localStorage (không chỉ cookie).
+                // Token nằm ở key "vetc-utilities" -> userToken.access_token.
+                function getAccessToken() {
+                    try {
+                        var raw = localStorage.getItem('vetc-utilities');
+                        if (!raw) return '';
+                        var parsed = JSON.parse(raw);
+                        return (parsed && parsed.userToken && parsed.userToken.access_token) || '';
+                    } catch (e) {
+                        return '';
+                    }
+                }
+
+                // Dò tìm browser_id / browser_ip trong toàn bộ localStorage (không đoán đúng
+                // tên key cố định) - quét mọi key, thử parse JSON, tìm đệ quy 2 trường này.
+                function findFieldDeep(obj, fieldName, depth) {
+                    if (!obj || typeof obj !== 'object' || depth > 4) return null;
+                    if (obj[fieldName] !== undefined && obj[fieldName] !== null) return obj[fieldName];
+                    for (var key in obj) {
+                        if (!obj.hasOwnProperty(key)) continue;
+                        var val = obj[key];
+                        if (val && typeof val === 'object') {
+                            var found = findFieldDeep(val, fieldName, depth + 1);
+                            if (found !== null) return found;
+                        }
+                    }
+                    return null;
+                }
+                function scanLocalStorageFor(fieldName) {
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var key = localStorage.key(i);
+                        var raw = localStorage.getItem(key);
+                        if (!raw) continue;
+                        try {
+                            var parsed = JSON.parse(raw);
+                            var found = findFieldDeep(parsed, fieldName, 0);
+                            if (found) return String(found);
+                        } catch (e) {
+                            // không phải JSON, bỏ qua
+                        }
+                    }
+                    return '';
+                }
+
+                var plateValue = getCurrentPlateInputValue();
+                if (!plateValue) {
+                    reportError('Không tìm thấy ô biển số đang nhập trên trang. Bạn tra cứu biển số trên trang VOS trước rồi mới bấm Check.');
+                    return;
+                }
+
+                var accessToken = getAccessToken();
+                if (!accessToken) {
+                    reportError('Không tìm thấy token đăng nhập (access_token) trong localStorage. Bạn đăng nhập lại trên trang VOS rồi thử Check lại.');
+                    return;
+                }
+                var browserId = scanLocalStorageFor('browser_id');
+                var browserIp = scanLocalStorageFor('browser_ip');
+
+                try {
+                    var url = '/api/360/registration-info?plate=' + encodeURIComponent(plateValue);
+                    var headers = {
+                        'Accept': 'application/json',
+                        'Authorization': 'Bearer ' + accessToken
+                    };
+                    if (browserId) headers['browser_id'] = browserId;
+                    if (browserIp) headers['browser_ip'] = browserIp;
+
+                    var res = await fetch(url, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: headers
+                    });
+
+                    if (!res.ok) {
+                        if (res.status === 403) {
+                            reportError('API từ chối truy cập (403) - có thể thiếu quyền hoặc token không hợp lệ.');
+                        } else if (res.status === 401) {
+                            reportError('Phiên đăng nhập đã hết hạn (401) - đăng nhập lại trên VOS rồi Check lại.');
+                        } else {
+                            reportError('Gọi API thất bại, mã lỗi HTTP ' + res.status);
+                        }
+                        return;
+                    }
+
+                    var json;
+                    try {
+                        json = await res.json();
+                    } catch (parseErr) {
+                        reportError('Không đọc được dữ liệu trả về (không phải JSON hợp lệ)');
+                        return;
+                    }
+
+                    // Response có thể bọc trong "data" hoặc trả phẳng ngay ở gốc - đọc cả 2 kiểu
+                    var payload = (json && json.data && typeof json.data === 'object') ? json.data : json;
+                    var plateRegistry = payload && payload.plate_registry ? String(payload.plate_registry) : '';
+                    var frameNumber = payload && payload.frame_number ? String(payload.frame_number) : '';
+
+                    if (!plateRegistry && !frameNumber) {
+                        reportError('API trả về thành công nhưng không có dữ liệu biển số/số khung');
+                        return;
+                    }
+
+                    reportSuccess(plateRegistry, frameNumber);
+                } catch (networkErr) {
+                    reportError('Lỗi mạng hoặc lỗi khi gọi API: ' + (networkErr && networkErr.message ? networkErr.message : String(networkErr)));
+                }
+            })();
+        """.trimIndent()
+
+        binding.webView.evaluateJavascript(js, null)
+    }
+
+    private fun copyToClipboard(label: String, text: String) {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    }
+
+    /** Mở Chrome thật (vượt qua được Cloudflare); nếu máy không có Chrome, dùng trình duyệt mặc định. */
+    private fun openInChromeOrDefaultBrowser(url: String) {
+        val chromeIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            setPackage("com.android.chrome")
             addCategory(Intent.CATEGORY_BROWSABLE)
         }
         try {
-            startActivity(intent)
+            startActivity(chromeIntent)
         } catch (e: ActivityNotFoundException) {
-            binding.webView.stopLoading()
-            binding.webView.loadUrl(VR_REGISTER_URL)
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                })
+            } catch (e2: ActivityNotFoundException) {
+                Toast.makeText(this, "Không tìm thấy trình duyệt nào trên máy để mở trang.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /** Cầu nối JS -> Android, nhận kết quả gọi API tra đăng kiểm. */
+    private inner class RegistryBridge {
+        /**
+         * Nhận biển số (plate_registry) + số khung đầy đủ (frame_number) từ API thật
+         * của VETC, lấy 6 ký tự cuối số khung, rồi COPY LẦN LƯỢT vào clipboard:
+         * 6 số cuối số khung TRƯỚC, biển số xe SAU - đúng thứ tự bạn yêu cầu - có
+         * Toast báo mỗi lần copy, sau đó mới tự mở Chrome tới trang đăng kiểm.
+         */
+        @JavascriptInterface
+        fun onRegistryDataExtracted(plate: String, frameNumberRaw: String, error: String) {
+            runOnUiThread {
+                if (error.isNotBlank()) {
+                    Toast.makeText(this@WebViewActivity, error, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+
+                val plateClean = plate.uppercase().filter { it.isLetterOrDigit() }
+                val frameClean = frameNumberRaw.uppercase().filter { it.isLetterOrDigit() }
+                val frameLast6 = if (frameClean.length >= 6) frameClean.takeLast(6) else frameClean
+
+                if (plateClean.isBlank() || frameLast6.isBlank()) {
+                    Toast.makeText(
+                        this@WebViewActivity,
+                        "API trả về thiếu dữ liệu biển số hoặc số khung.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@runOnUiThread
+                }
+
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+                // Bước 1: copy 6 số cuối số khung trước
+                copyToClipboard("Số khung", frameLast6)
+                Toast.makeText(this@WebViewActivity, "Đã copy số khung: $frameLast6", Toast.LENGTH_SHORT).show()
+
+                // Bước 2: sau đó copy biển số (ghi đè clipboard)
+                handler.postDelayed({
+                    copyToClipboard("Biển số", plateClean)
+                    Toast.makeText(this@WebViewActivity, "Đã copy biển số: $plateClean", Toast.LENGTH_SHORT).show()
+
+                    // Bước 3: mở Chrome sau khi đã copy xong cả 2
+                    handler.postDelayed({
+                        openInChromeOrDefaultBrowser(VR_REGISTER_URL)
+                    }, 900)
+                }, 900)
+            }
         }
     }
 
