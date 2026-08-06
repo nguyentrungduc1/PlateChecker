@@ -82,6 +82,8 @@ class MainActivity : AppCompatActivity() {
 
         if (allGranted) startCamera() else requestPermissionsLauncher.launch(neededPermissions.toTypedArray())
 
+        preloadVosPageInBackground()
+
         binding.btnCapture.setOnClickListener {
             if (isShowingCapturedPhoto) {
                 showCameraView()
@@ -428,9 +430,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Tải trước trang VOS bằng 1 WebView ẩn (1dp, invisible) ngay khi mở app - trong
+     * lúc bạn đang canh khung/chụp ảnh/chờ OCR, trang này đã âm thầm tải ở nền.
+     * WebView dùng chung 1 bộ nhớ đệm (cache) trong cùng app, nên khi màn hình Check
+     * thật sự mở trang này sau đó, nhiều tài nguyên (JS, CSS...) đã có sẵn trong cache,
+     * không cần tải lại từ đầu -> mở nhanh hơn. Không đảm bảo nhanh tuyệt đối vì còn
+     * phụ thuộc tốc độ mạng thực tế và cách trang VOS tự đặt hạn cache cho từng file.
+     */
+    private fun preloadVosPageInBackground() {
+        try {
+            val preload = binding.webViewPreload
+            preload.settings.javaScriptEnabled = true
+            preload.settings.domStorageEnabled = true
+            preload.settings.databaseEnabled = true
+            preload.loadUrl(VOS_HOME_URL)
+        } catch (e: Exception) {
+            Log.e(TAG, "Không tải trước được trang VOS", e)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
+        binding.webViewPreload.destroy()
     }
 
     companion object {

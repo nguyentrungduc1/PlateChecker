@@ -150,4 +150,15 @@
 
     </LinearLayout>
 
+    <!-- WebView ẩn, tải trước trang VOS ở nền ngay khi mở app để làm nóng bộ nhớ đệm
+         (cache JS/CSS dùng chung cho mọi WebView trong app) - giúp lần mở WebView thật
+         (màn Check) nhanh hơn vì nhiều tài nguyên đã có sẵn trong cache, không cần tải lại. -->
+    <WebView
+        android:id="@+id/webViewPreload"
+        android:layout_width="1dp"
+        android:layout_height="1dp"
+        android:visibility="invisible"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
