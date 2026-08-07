@@ -36,6 +36,9 @@ class WebViewActivity : AppCompatActivity() {
     private lateinit var binding: ActivityWebviewBinding
     private var pendingPlateCode: String = ""
     private var targetUrl: String = TARGET_URL
+    // Chỉ tự động điền 1 lần duy nhất cho mỗi lần mở màn hình này - tránh việc bấm Back
+    // quay lại trang cũ cũng bị coi là "trang mới cần điền", tự bật bàn phím lên lại.
+    private var vosAutoFillAttempted = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,7 +82,8 @@ class WebViewActivity : AppCompatActivity() {
                 val savedUser = CredentialStore.getUsername(this@WebViewActivity)
                 val savedPass = CredentialStore.getPassword(this@WebViewActivity)
 
-                if (url?.contains("vos.vetc.com.vn") == true) {
+                if (url?.contains("vos.vetc.com.vn") == true && !vosAutoFillAttempted) {
+                    vosAutoFillAttempted = true
                     runAutoFillScript(webView, pendingPlateCode, savedUser ?: "", savedPass ?: "")
                 }
             }
@@ -520,7 +524,6 @@ class WebViewActivity : AppCompatActivity() {
                 }
 
                 function setValue(el, val) {
-                    el.focus();
                     var proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
                     var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
                     if (nativeSetter && nativeSetter.set) {
