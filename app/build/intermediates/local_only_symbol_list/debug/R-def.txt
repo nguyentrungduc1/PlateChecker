@@ -1,0 +1,30 @@
+R_DEF: Internal format may change without notice
+local
+drawable bg_floating_button
+drawable bg_primary_yellow_button
+id bottomBar
+id btnBrowse
+id btnCapture
+id btnCheck
+id btnClosePriceList
+id btnFlashToggle
+id btnLoadImage
+id btnManageCredentials
+id btnPriceList
+id btnRegistrationCheck
+id btnRegistryCheck
+id guideOverlay
+id imgPlate
+id imgPreview
+id previewView
+id priceOverlay
+id priceTableContainer
+id txtResult
+id webView
+id webViewPreload
+layout activity_main
+layout activity_webview
+mipmap ic_launcher
+mipmap ic_launcher_round
+string app_name
+style Theme.PlateChecker

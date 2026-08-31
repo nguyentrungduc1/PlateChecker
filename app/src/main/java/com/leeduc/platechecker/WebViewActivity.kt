@@ -338,18 +338,15 @@ class WebViewActivity : AppCompatActivity() {
                 copyToClipboard("Số khung", frameLast6)
                 Toast.makeText(this@WebViewActivity, "Đã copy số khung: $frameLast6", Toast.LENGTH_SHORT).show()
 
-                // Bước 2: sau đó copy biển số (ghi đè clipboard). Khoảng chờ giữa các bước
-                // trước đây là 900ms - chỉ để kịp đọc Toast, không phải giới hạn kỹ thuật
-                // (copy vào clipboard vốn gần như tức thì) - rút xuống 200ms cho nhanh hơn.
+                // Bước 2: sau đó copy biển số (ghi đè clipboard). Giữ nhịp rất ngắn
+                // để clipboard/clipboard history kịp nhận 2 lần copy, rồi mở Chrome ngay.
                 handler.postDelayed({
                     copyToClipboard("Biển số", plateClean)
                     Toast.makeText(this@WebViewActivity, "Đã copy biển số: $plateClean", Toast.LENGTH_SHORT).show()
 
                     // Bước 3: mở Chrome ngay sau khi copy xong cả 2
-                    handler.postDelayed({
-                        openInChromeOrDefaultBrowser(VR_REGISTER_URL)
-                    }, 200)
-                }, 200)
+                    openInChromeOrDefaultBrowser(VR_REGISTER_URL)
+                }, 50)
             }
         }
     }

@@ -35,7 +35,7 @@
         android:paddingEnd="14dp"
         android:paddingTop="10dp"
         android:paddingBottom="10dp"
-        android:text="⚡ Flash: Bật"
+        android:text="⚡ Flash: Tắt"
         android:textSize="13sp"
         android:background="@drawable/bg_floating_button"
         android:textColor="#FFFFFF"

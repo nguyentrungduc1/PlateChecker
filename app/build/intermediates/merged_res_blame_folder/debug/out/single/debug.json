@@ -1,0 +1,58 @@
+[
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/drawable_bg_primary_yellow_button.xml.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/drawable/bg_primary_yellow_button.xml"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-xxxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-xhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-xxhdpi_ic_launcher_round.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-xxhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/layout_activity_webview.xml.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/layout/activity_webview.xml"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-hdpi_ic_launcher.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-hdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-xxxhdpi_ic_launcher_round.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-xxxhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-mdpi_ic_launcher.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-mdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/layout_activity_main.xml.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-xxhdpi_ic_launcher.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-xxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-mdpi_ic_launcher_round.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-mdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/drawable_bg_floating_button.xml.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/drawable/bg_floating_button.xml"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-xhdpi_ic_launcher_round.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-xhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.leeduc.platechecker.app-merged_res-43:/mipmap-hdpi_ic_launcher_round.png.flat",
+        "source": "com.leeduc.platechecker.app-main-45:/mipmap-hdpi/ic_launcher_round.png"
+    }
+]

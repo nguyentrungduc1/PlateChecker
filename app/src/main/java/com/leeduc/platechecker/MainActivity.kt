@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.graphics.RectF
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
@@ -21,7 +22,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageCapture.OnImageCapturedCallback
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -46,7 +49,7 @@ class MainActivity : AppCompatActivity() {
     // quay lại app sau khi chọn ảnh (cả 2 đều gây onPause/onResume như nhau,
     // nên không thể dùng chung isShowingCapturedPhoto để phân biệt).
     private var pendingResetAfterWebView = false
-    private var flashEnabled = true
+    private var flashEnabled = false
 
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -69,6 +72,8 @@ class MainActivity : AppCompatActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
         binding.previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+        flashEnabled = getPreferences(MODE_PRIVATE).getBoolean(PREF_FLASH_ENABLED, false)
+        updateFlashUi()
 
         val neededPermissions = mutableListOf(Manifest.permission.CAMERA)
         // Trên Android 9 (API 28) trở xuống cần quyền ghi bộ nhớ để lưu vào DCIM theo kiểu file cũ
@@ -107,9 +112,17 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnFlashToggle.setOnClickListener {
             flashEnabled = !flashEnabled
-            imageCapture?.flashMode = if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
-            binding.btnFlashToggle.text = if (flashEnabled) "⚡ Flash: Bật" else "⚡ Flash: Tắt"
+            getPreferences(MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_FLASH_ENABLED, flashEnabled)
+                .apply()
+            updateFlashUi()
         }
+    }
+
+    private fun updateFlashUi() {
+        imageCapture?.flashMode = if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+        binding.btnFlashToggle.text = if (flashEnabled) "⚡ Flash: Bật" else "⚡ Flash: Tắt"
     }
 
     /** Quay lại xem camera trực tiếp để canh và chụp tấm tiếp theo. */
@@ -163,64 +176,58 @@ class MainActivity : AppCompatActivity() {
 
         val name = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
         val fileName = "PLATE_$name.jpg"
+        val guideRectFraction = binding.guideOverlay.getGuideRectFraction()
 
-        val outputOptions: ImageCapture.OutputFileOptions
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 10+: lưu vào DCIM/PlateChecker qua MediaStore (bắt buộc theo scoped storage)
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/PlateChecker")
-            }
-            outputOptions = ImageCapture.OutputFileOptions.Builder(
-                contentResolver,
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                contentValues
-            ).build()
-        } else {
-            // Android 9 trở xuống: ghi trực tiếp vào thư mục DCIM công khai
-            val dcimDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
-            val targetDir = File(dcimDir, "PlateChecker")
-            if (!targetDir.exists()) targetDir.mkdirs()
-            val photoFile = File(targetDir, fileName)
-            outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-        }
+        binding.btnCapture.isEnabled = false
 
         imageCapture.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
+            cameraExecutor,
+            object : OnImageCapturedCallback() {
                 override fun onError(exc: ImageCaptureException) {
                     Log.e(TAG, "Chụp ảnh thất bại", exc)
-                    Toast.makeText(baseContext, "Chụp ảnh thất bại: ${exc.message}", Toast.LENGTH_SHORT).show()
+                    runOnUiThread {
+                        binding.btnCapture.isEnabled = true
+                        Toast.makeText(baseContext, "Chụp ảnh thất bại: ${exc.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
 
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val uri = output.savedUri ?: run {
-                        Toast.makeText(baseContext, "Lỗi: không lấy được đường dẫn ảnh", Toast.LENGTH_SHORT).show()
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    val rotatedBitmap = try {
+                        val capturedBitmap = image.toBitmap()
+                        rotateBitmap(capturedBitmap, image.imageInfo.rotationDegrees)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Không xử lý được ảnh vừa chụp", e)
+                        runOnUiThread {
+                            binding.btnCapture.isEnabled = true
+                            Toast.makeText(baseContext, "Không xử lý được ảnh vừa chụp: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
                         return
-                    }
-                    lastPhotoUri = uri
-
-                    // Quét lại media store cho thiết bị cũ để ảnh hiện ngay trong Gallery
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                        sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, uri))
+                    } finally {
+                        image.close()
                     }
 
-                    // Xoay ảnh đúng chiều theo EXIF, đóng dấu ngày giờ chụp vào góc dưới bên phải,
-                    // rồi ghi đè lại file gốc một lần (ảnh lưu trong DCIM sẽ có sẵn dấu thời gian)
-                    val rotatedBitmap = fixOrientation(uri)
+                    // OCR dùng ảnh vừa chụp trong RAM, chưa đóng dấu và chưa qua vòng nén JPEG nào.
+                    val plateCrop = cropToGuideRegion(rotatedBitmap, guideRectFraction)
+
+                    runOnUiThread {
+                        lastPlateCropBitmap = plateCrop
+                        binding.btnCapture.isEnabled = true
+                        showCapturedResult(plateCrop)
+                    }
+
+                    // Ảnh lưu DCIM được đóng dấu và nén JPEG đúng một lần, chạy sau khi UI đã có phản hồi.
                     val stampedBitmap = addTimestampWatermark(rotatedBitmap)
-                    saveBitmapToUri(stampedBitmap, uri)
+                    val savedUri = saveBitmapToGallery(stampedBitmap, fileName)
+                    lastPhotoUri = savedUri
 
-                    // Chỉ cắt đúng vùng nằm trong khung ngắm để đưa vào OCR, không quét cả ảnh
-                    val plateCrop = cropToGuideRegion(stampedBitmap)
-                    lastPlateCropBitmap = plateCrop
-
-                    Toast.makeText(baseContext, "Đã lưu vào DCIM/PlateChecker", Toast.LENGTH_SHORT).show()
-
-                    showCapturedResult(plateCrop)
+                    runOnUiThread {
+                        val message = if (savedUri != null) {
+                            "Đã lưu vào DCIM/PlateChecker"
+                        } else {
+                            "Đã chụp ảnh, nhưng chưa lưu được vào DCIM"
+                        }
+                        Toast.makeText(baseContext, message, Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         )
@@ -289,7 +296,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Vẽ dấu ngày giờ chụp vào góc dưới bên phải của ảnh, kiểu dấu thời gian của
+     * Xoay vật lý pixel ảnh vừa nhận từ CameraX theo metadata của ImageProxy.
+     */
+    private fun rotateBitmap(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
+        if (rotationDegrees == 0) return bitmap
+
+        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
+    }
+
+    /**
+     * Vẽ dấu ngày giờ chụp vào góc dưới bên trái của ảnh, kiểu dấu thời gian của
      * máy ảnh cũ - có nền mờ phía sau chữ để luôn đọc được dù nền ảnh sáng hay tối.
      */
     private fun addTimestampWatermark(bitmap: Bitmap): Bitmap {
@@ -314,9 +331,9 @@ class MainActivity : AppCompatActivity() {
         val fontMetrics = textPaint.fontMetrics
         val textHeight = fontMetrics.bottom - fontMetrics.top
 
-        val boxRight = stamped.width - padding
+        val boxLeft = padding
         val boxBottom = stamped.height - padding
-        val boxLeft = boxRight - textWidth - padding
+        val boxRight = boxLeft + textWidth + padding
         val boxTop = boxBottom - textHeight - padding * 0.5f
 
         val bgPaint = android.graphics.Paint().apply {
@@ -328,20 +345,61 @@ class MainActivity : AppCompatActivity() {
             12f, 12f, bgPaint
         )
 
-        val textX = boxRight - padding / 2f - textWidth
+        val textX = boxLeft + padding / 2f
         val textY = boxBottom - padding / 2f - fontMetrics.bottom
         canvas.drawText(timestampText, textX, textY, textPaint)
 
         return stamped
     }
 
-    private fun saveBitmapToUri(bitmap: Bitmap, uri: Uri) {
-        try {
-            contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+    private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): Uri? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10+: lưu vào DCIM/PlateChecker qua MediaStore (scoped storage).
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/PlateChecker")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+
+                val uri = contentResolver.insert(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    contentValues
+                ) ?: return null
+
+                val saved = contentResolver.openOutputStream(uri, "w")?.use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                } == true
+
+                if (!saved) {
+                    contentResolver.delete(uri, null, null)
+                    return null
+                }
+
+                contentResolver.update(
+                    uri,
+                    ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                    null,
+                    null
+                )
+                uri
+            } else {
+                // Android 9 trở xuống: ghi trực tiếp vào thư mục DCIM công khai.
+                val dcimDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
+                val targetDir = File(dcimDir, "PlateChecker")
+                if (!targetDir.exists()) targetDir.mkdirs()
+                val photoFile = File(targetDir, fileName)
+                FileOutputStream(photoFile).use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                }
+                val uri = Uri.fromFile(photoFile)
+                sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, uri))
+                uri
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Không ghi được ảnh đã đóng dấu thời gian", e)
+            Log.e(TAG, "Không lưu được ảnh đã đóng dấu thời gian", e)
+            null
         }
     }
 
@@ -351,8 +409,10 @@ class MainActivity : AppCompatActivity() {
      * thấy vùng biển số thay vì toàn bộ bức ảnh.
      */
     private fun cropToGuideRegion(bitmap: Bitmap): Bitmap {
-        val frac = binding.guideOverlay.getGuideRectFraction()
+        return cropToGuideRegion(bitmap, binding.guideOverlay.getGuideRectFraction())
+    }
 
+    private fun cropToGuideRegion(bitmap: Bitmap, frac: RectF): Bitmap {
         val left = (frac.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
         val top = (frac.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
         val right = (frac.right * bitmap.width).toInt().coerceIn(left + 1, bitmap.width)
@@ -458,6 +518,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "PlateChecker"
+        private const val PREF_FLASH_ENABLED = "flash_enabled"
         private const val VOS_HOME_URL = "https://vos.vetc.com.vn/"
         private const val VOS_REGISTER_URL = "https://vos.vetc.com.vn/search-info-register"
     }
