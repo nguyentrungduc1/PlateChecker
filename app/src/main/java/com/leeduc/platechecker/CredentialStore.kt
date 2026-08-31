@@ -2,6 +2,7 @@ package com.leeduc.platechecker
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
@@ -13,6 +14,7 @@ import androidx.security.crypto.MasterKey
  */
 object CredentialStore {
 
+    private const val TAG = "CredentialStore"
     private const val PREFS_NAME = "vos_credentials_encrypted"
     private const val KEY_USERNAME = "username"
     private const val KEY_PASSWORD = "password"
@@ -31,21 +33,38 @@ object CredentialStore {
         )
     }
 
-    fun save(context: Context, username: String, password: String) {
-        prefs(context).edit()
-            .putString(KEY_USERNAME, username)
-            .putString(KEY_PASSWORD, password)
-            .apply()
+    private fun prefsOrNull(context: Context): SharedPreferences? {
+        return try {
+            prefs(context)
+        } catch (e: Exception) {
+            Log.e(TAG, "Không mở được kho mật khẩu mã hoá, thử xoá dữ liệu hỏng", e)
+            try {
+                context.deleteSharedPreferences(PREFS_NAME)
+                prefs(context)
+            } catch (retryError: Exception) {
+                Log.e(TAG, "Không khôi phục được kho mật khẩu mã hoá", retryError)
+                null
+            }
+        }
     }
 
-    fun getUsername(context: Context): String? = prefs(context).getString(KEY_USERNAME, null)
+    fun save(context: Context, username: String, password: String) {
+        prefsOrNull(context)?.edit()?.let { editor ->
+            editor
+                .putString(KEY_USERNAME, username)
+                .putString(KEY_PASSWORD, password)
+                .apply()
+        }
+    }
 
-    fun getPassword(context: Context): String? = prefs(context).getString(KEY_PASSWORD, null)
+    fun getUsername(context: Context): String? = prefsOrNull(context)?.getString(KEY_USERNAME, null)
+
+    fun getPassword(context: Context): String? = prefsOrNull(context)?.getString(KEY_PASSWORD, null)
 
     fun hasSavedCredentials(context: Context): Boolean =
         !getUsername(context).isNullOrBlank() && !getPassword(context).isNullOrBlank()
 
     fun clear(context: Context) {
-        prefs(context).edit().clear().apply()
+        prefsOrNull(context)?.edit()?.clear()?.apply()
     }
 }

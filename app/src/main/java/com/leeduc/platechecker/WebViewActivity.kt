@@ -60,7 +60,7 @@ class WebViewActivity : AppCompatActivity() {
         webView.settings.setSupportZoom(true)
         webView.settings.builtInZoomControls = true
         webView.settings.displayZoomControls = false
-        webView.settings.userAgentString = webView.settings.userAgentString.replace("; wv", "")
+        webView.settings.userAgentString = webView.settings.userAgentString?.replace("; wv", "")
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)

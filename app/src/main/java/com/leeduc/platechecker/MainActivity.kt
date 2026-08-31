@@ -51,6 +51,8 @@ class MainActivity : AppCompatActivity() {
     private var pendingResetAfterWebView = false
     private var flashEnabled = false
 
+    private data class PreviewSize(val width: Int, val height: Int)
+
     private val requestPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
             val cameraGranted = results[Manifest.permission.CAMERA] == true
@@ -177,6 +179,7 @@ class MainActivity : AppCompatActivity() {
         val name = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
         val fileName = "PLATE_$name.jpg"
         val guideRectFraction = binding.guideOverlay.getGuideRectFraction()
+        val previewSize = PreviewSize(binding.previewView.width, binding.previewView.height)
 
         binding.btnCapture.isEnabled = false
 
@@ -207,7 +210,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     // OCR dùng ảnh vừa chụp trong RAM, chưa đóng dấu và chưa qua vòng nén JPEG nào.
-                    val plateCrop = cropToGuideRegion(rotatedBitmap, guideRectFraction)
+                    val plateCrop = cropToGuideRegion(rotatedBitmap, guideRectFraction, previewSize)
 
                     runOnUiThread {
                         lastPlateCropBitmap = plateCrop
@@ -409,16 +412,45 @@ class MainActivity : AppCompatActivity() {
      * thấy vùng biển số thay vì toàn bộ bức ảnh.
      */
     private fun cropToGuideRegion(bitmap: Bitmap): Bitmap {
-        return cropToGuideRegion(bitmap, binding.guideOverlay.getGuideRectFraction())
+        return cropToGuideRegion(
+            bitmap,
+            binding.guideOverlay.getGuideRectFraction(),
+            PreviewSize(binding.previewView.width, binding.previewView.height)
+        )
     }
 
-    private fun cropToGuideRegion(bitmap: Bitmap, frac: RectF): Bitmap {
-        val left = (frac.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
-        val top = (frac.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
-        val right = (frac.right * bitmap.width).toInt().coerceIn(left + 1, bitmap.width)
-        val bottom = (frac.bottom * bitmap.height).toInt().coerceIn(top + 1, bitmap.height)
+    private fun cropToGuideRegion(bitmap: Bitmap, frac: RectF, previewSize: PreviewSize): Bitmap {
+        val visibleImageRect = getVisibleImageRectForFillCenter(bitmap, previewSize)
+
+        val left = (visibleImageRect.left + frac.left * visibleImageRect.width()).toInt()
+            .coerceIn(0, bitmap.width - 1)
+        val top = (visibleImageRect.top + frac.top * visibleImageRect.height()).toInt()
+            .coerceIn(0, bitmap.height - 1)
+        val right = (visibleImageRect.left + frac.right * visibleImageRect.width()).toInt()
+            .coerceIn(left + 1, bitmap.width)
+        val bottom = (visibleImageRect.top + frac.bottom * visibleImageRect.height()).toInt()
+            .coerceIn(top + 1, bitmap.height)
 
         return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+    }
+
+    private fun getVisibleImageRectForFillCenter(bitmap: Bitmap, previewSize: PreviewSize): RectF {
+        if (previewSize.width <= 0 || previewSize.height <= 0 || bitmap.width <= 0 || bitmap.height <= 0) {
+            return RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat())
+        }
+
+        val viewWidth = previewSize.width.toFloat()
+        val viewHeight = previewSize.height.toFloat()
+        val bitmapWidth = bitmap.width.toFloat()
+        val bitmapHeight = bitmap.height.toFloat()
+
+        val scale = maxOf(viewWidth / bitmapWidth, viewHeight / bitmapHeight)
+        val visibleWidth = viewWidth / scale
+        val visibleHeight = viewHeight / scale
+        val left = (bitmapWidth - visibleWidth) / 2f
+        val top = (bitmapHeight - visibleHeight) / 2f
+
+        return RectF(left, top, left + visibleWidth, top + visibleHeight)
     }
 
     /** Lưu tạm ảnh biển số vào cache của app, dùng để truyền qua WebViewActivity (tránh Intent quá lớn). */
